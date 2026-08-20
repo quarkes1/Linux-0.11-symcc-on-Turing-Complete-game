@@ -27,12 +27,29 @@
 
 static FILE *out_asm;
 static int label_cnt;
+static Func *cur_func;   /* 当前生成函数（__builtin_va_start / 参数复制用） */
 
 /* break/continue 目标标签栈（循环/switch 压入，gen_stmt 消费） */
 static const char *brk_lbls[64];
 static int brk_depth;
 static const char *cont_lbls[64];
 static int cont_depth;
+
+/* 块拷贝：r1 = 源地址（低地址），r9 = 目标地址，按 4 字节块复制 size 字节。
+ * 约定使用 r2/r3 作暂存（本 helper 内部不调用其他 gen_*，无嵌套冲突） */
+static void gen_block_copy(int64_t size) {
+    for (int64_t off = 0; off + 4 <= size; off += 4) {
+        fprintf(out_asm, "    add r3, r1, %d      ; copy src\n", (int)off);
+        fprintf(out_asm, "    load_32 r2, [r3]\n");
+        fprintf(out_asm, "    add r3, r9, %d      ; copy dst\n", (int)off);
+        fprintf(out_asm, "    store_32 [r3], r2\n");
+    }
+}
+
+/* 类型是否按值传聚合（struct/union）：是 → 块拷贝，否 → 4 字节标量 */
+static bool is_agg(Type *t) {
+    return t->kind == TY_STRUCT || t->kind == TY_UNION;
+}
 
 static void err_imm(Token *t, int64_t val) {
     fprintf(stderr, "constant too large for 16-bit immediate: %lld (%.*s)\n",
@@ -105,6 +122,13 @@ static void gen_laddr(Node *n) {
 static void gen_member_addr(Node *n) {
     if (n->lhs->kind == ND_DEREF) {
         gen_expr(n->lhs->lhs);             /* 指针值（p->m 展开） */
+        if (n->val)
+            fprintf(out_asm, "    add r9, r1, %d      ; member +%lld\n", (int)n->val, (long long)n->val);
+        else
+            fprintf(out_asm, "    mov r9, r1          ; member\n");
+    } else if (n->lhs->kind == ND_CALL) {
+        /* f().m：f() 的 struct 结果地址在 r1（非左值，不能 gen_laddr） */
+        gen_expr(n->lhs);
         if (n->val)
             fprintf(out_asm, "    add r9, r1, %d      ; member +%lld\n", (int)n->val, (long long)n->val);
         else
@@ -272,6 +296,20 @@ static void gen_expr(Node *n) {
         else
             gen_load(n->ty);
         return;
+    case ND_VASTART:
+        /* AP = 参数区起始 + 固定参数区大小 = r10 + 8 + 4*nfixed
+         * （struct 返回函数隐藏 arg0 占 [r10+8]，固定参数后移 4） */
+        gen_laddr(n->lhs);               /* r9 = AP 槽地址 */
+        fprintf(out_asm, "    push r9            ; va_list slot\n");
+        fprintf(out_asm, "    mov r9, r10\n");
+        fprintf(out_asm, "    add r9, r9, %d    ; va_start\n",
+                8 + 4 * cur_func->nargs +
+                (cur_func->has_retbuf
+                     ? (int)(((size_t)cur_func->fty->base->size + 3) & ~3)
+                     : 0));
+        fprintf(out_asm, "    pop r2             ; va_list slot\n");
+        fprintf(out_asm, "    store_32 [r2], r9\n");
+        return;
     case ND_CAST:
         gen_expr(n->lhs);
         if (n->ty->kind == TY_CHAR) {
@@ -291,22 +329,43 @@ static void gen_expr(Node *n) {
     case ND_ASSIGN:
         gen_laddr(n->lhs);           /* 先求左值地址（无副作用） */
         fprintf(out_asm, "    push r9            ; 暂存地址\n");
-        gen_expr(n->rhs);
-        fprintf(out_asm, "    pop r9             ; 取回地址\n");
-        if (n->lhs->bit_width >= 0)
+        gen_expr(n->rhs);            /* struct → r1 = 源地址 */
+        fprintf(out_asm, "    pop r9             ; 取回目标地址\n");
+        if (is_agg(n->ty)) {
+            gen_block_copy(n->ty->size);
+        } else if (n->lhs->bit_width >= 0) {
             gen_store_bitfield(n->lhs);
-        else
+        } else {
             gen_store(n->ty);
+        }
         return;
     case ND_CALL: {
-        /* 实参从右往左求值并 push（全栈传参）→ call → 清理 */
+        /* 实参从右往左求值（全栈传参）→ call → 清理。
+         * struct/union 实参：块拷贝压栈（sub sp + 逐块 store）；
+         * struct 返回函数：隐藏首参数（最后 push）= 返回缓冲区地址 */
         Node *args[64];
         int na = 0;
         for (Node *a = n->rhs; a; a = a->next)
             args[na++] = a;
+        bool retbuf = is_agg(n->ty);
+        int64_t total = 0;
         for (int k = na - 1; k >= 0; k--) {
             gen_expr(args[k]);
-            fprintf(out_asm, "    push r1            ; arg %d\n", k);
+            if (is_agg(args[k]->ty)) {
+                int64_t sz = args[k]->ty->size;
+                fprintf(out_asm, "    sub sp, sp, %d      ; struct arg %d\n", (int)sz, k);
+                fprintf(out_asm, "    mov r9, sp\n");
+                gen_block_copy(sz);
+                total += sz;
+            } else {
+                fprintf(out_asm, "    push r1            ; arg %d\n", k);
+                total += 4;
+            }
+        }
+        if (retbuf) {
+            /* 返回缓冲区 = 隐藏 arg0（本体占 [r10+8]，用户参数后移对齐） */
+            fprintf(out_asm, "    sub sp, sp, %d      ; retbuf\n", (int)n->ty->size);
+            total += n->ty->size;
         }
         if (n->name) {
             fprintf(out_asm, "    call %s\n", n->name);
@@ -320,8 +379,12 @@ static void gen_expr(Node *n) {
             fprintf(out_asm, "    push r2            ; 返回地址\n");
             fprintf(out_asm, "    jmp r1             ; 动态调用\n");
         }
-        if (na > 0)
-            fprintf(out_asm, "    add sp, sp, %d      ; 清理实参\n", 4 * na);
+        if (retbuf) {
+            /* 表达式结果 = retbuf 本体地址（sp 即缓冲起点） */
+            fprintf(out_asm, "    mov r1, sp          ; struct result addr\n");
+        }
+        if (total > 0)
+            fprintf(out_asm, "    add sp, sp, %d      ; 清理实参\n", (int)total);
         return;
     }
     case ND_NEG:
@@ -479,7 +542,14 @@ static void gen_stmts(Node *n) {
 static void gen_stmt(Node *n) {
     switch (n->kind) {
     case ND_RETURN:
-        gen_expr(n->lhs);
+        if (n->lhs && is_agg(n->lhs->ty)) {
+            /* struct/union 返回：拷贝到隐藏返回缓冲区 [r10+8] */
+            gen_expr(n->lhs);            /* r1 = 源地址 */
+            fprintf(out_asm, "    add r9, r10, 8       ; retbuf\n");
+            gen_block_copy(n->lhs->ty->size);
+        } else {
+            gen_expr(n->lhs);
+        }
         fprintf(out_asm, "    ; return\n");
         fprintf(out_asm, "    mov sp, r10\n");
         fprintf(out_asm, "    pop r10            ; 恢复调用方帧指针\n");
@@ -627,6 +697,7 @@ static void gen_epilogue(void) {
 
 /* 函数序言 + 体 + 尾言 */
 static void gen_func(Func *f) {
+    cur_func = f;
     fprintf(out_asm, "\n%s:\n", f->name);
     fprintf(out_asm, "    push r10             ; 保存调用方帧指针\n");
     fprintf(out_asm, "    mov r10, sp          ; 帧基址\n");
@@ -634,13 +705,28 @@ static void gen_func(Func *f) {
         fprintf(out_asm, "    sub sp, sp, %d        ; 帧：局部变量 %d 字节\n",
                 f->frame_size, f->frame_size);
 
-    /* 参数拷入栈槽：实参 k 在 [r10+8+4k]（序言 push r10 后入口 sp = r10，
-     * 实参原本在入口 sp+4+4k）；栈槽 = r10-4*(k+1)（参数先于局部分配） */
+    /* 参数拷入栈槽：实参 k 在 [r10+8+参数区累积偏移]（序言 push r10 后
+     * 入口 sp = r10）；struct 返回函数隐藏 arg0 = 返回缓冲区本体，占
+     * [r10+8]（对齐），用户参数从 [r10+8+对齐大小] 起。栈槽按参数大小
+     * 对齐分配（与 parse 的 locals_bytes 累积一致）。 */
+    int arg_off = 8 + (f->has_retbuf
+                           ? (int)(((size_t)f->fty->base->size + 3) & ~3)
+                           : 0);
+    int slot_off = 0;
     for (int k = 0; k < f->nargs; k++) {
-        fprintf(out_asm, "    add r9, r10, %d        ; arg %d addr\n", 8 + 4 * k, k);
-        fprintf(out_asm, "    load_32 r1, [r9]\n");
-        fprintf(out_asm, "    sub r9, r10, %d        ; arg %d slot\n", 4 * (k + 1), k);
-        fprintf(out_asm, "    store_32 [r9], r1\n");
+        int64_t psz = ((size_t)f->param_tys[k]->size + 3) & ~3;
+        slot_off += (int)psz;
+        if (is_agg(f->param_tys[k])) {
+            fprintf(out_asm, "    add r1, r10, %d        ; arg %d src\n", arg_off, k);
+            fprintf(out_asm, "    sub r9, r10, %d        ; arg %d slot\n", slot_off, k);
+            gen_block_copy(f->param_tys[k]->size);
+        } else {
+            fprintf(out_asm, "    add r9, r10, %d        ; arg %d addr\n", arg_off, k);
+            fprintf(out_asm, "    load_32 r1, [r9]\n");
+            fprintf(out_asm, "    sub r9, r10, %d        ; arg %d slot\n", slot_off, k);
+            fprintf(out_asm, "    store_32 [r9], r1\n");
+        }
+        arg_off += (int)psz;
     }
 
     gen_stmts(f->body);
@@ -915,6 +1001,14 @@ bool codegen(Program *prog, FILE *out) {
     for (Func *f = prog->funcs; f; f = f->next)
         if (!(f->len == 4 && strncmp(f->name, "main", 4) == 0))
             flist[n++] = f;
+    /* 占位（仅声明/隐式声明，无函数体）不发射——否则 gen_stmts(NULL) 崩 */
+    {
+        int m = 0;
+        for (int i = 0; i < n; i++)
+            if (!flist[i]->is_decl)
+                flist[m++] = flist[i];
+        n = m;
+    }
     if (n > 256) { fprintf(stderr, "codegen: too many functions\n"); exit(1); }
     for (int i = 0; i < n; i++)
         gen_func(flist[i]);

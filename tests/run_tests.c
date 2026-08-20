@@ -71,6 +71,8 @@ static void compile_and_run(const char *c_file, int expected_exit,
     assert(n > 0);
     res = emu_run(bin, (size_t)n, 8 << 20, 100000000);
     assert(res.error == 0);
+    if (res.exit_code != expected_exit)
+        fprintf(stderr, "MISMATCH %s: got %d want %d\n", c_file, res.exit_code, expected_exit);
     assert(res.exit_code == expected_exit);
     if (screen_len)
         assert(memcmp(res.mem + 0x2000, screen, screen_len) == 0);
@@ -114,6 +116,8 @@ int main(void) {
     compile_and_run("tests/test_break_while_for.c", 27, NULL, 0, "runtime/divsi3.c");
     compile_and_run("tests/test_switch.c", 25, NULL, 0, "");
     compile_and_run("tests/test_goto.c", 15, NULL, 0, "");
+    /* M2 Task 4 验收：struct 传参 / 返回 / 赋值 / 可变参数 */
+    compile_and_run("tests/test_struct_abi.c", 170, NULL, 0, "");
     printf("ALL TESTS PASSED\n");
     return 0;
 }

@@ -147,6 +147,7 @@ enum {
     ND_BREAK,    /* 语句：jmp 最内层循环/switch 出口 */
     ND_CONTINUE, /* 语句：jmp 最内层循环条件/增量处 */
     ND_DOWHILE,  /* 语句：lhs=体，rhs=条件 */
+    ND_VASTART,  /* 表达式：__builtin_va_start 展开；lhs = AP lvalue */
 };
 
 typedef struct Node {
@@ -182,6 +183,7 @@ typedef struct Func {
     bool is_variadic;  /* 原型含 "..." */
     bool is_decl;      /* 仅原型声明（可被定义覆盖） */
     bool is_static;    /* static 函数（不导出符号，Task 5 消费） */
+    bool has_retbuf;   /* struct/union 返回：隐藏首参数 = 返回缓冲区指针 */
 } Func;
 
 /* 全局变量声明 */

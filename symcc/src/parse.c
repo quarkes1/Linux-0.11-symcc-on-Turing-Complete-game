@@ -953,6 +953,8 @@ static void struct_members(Type *ty) {
         off += 4;                  /* 尾部位域单元占 4 字节 */
     ty->members = head.next;
     ty->size = (off + 3) & ~3;   /* 4 对齐总大小 */
+    if (ty->size == 0)
+        error_at(tok, "empty struct/union not supported");
 }
 
 /* enum 声明：常量注册 + tag（枚举类型 = int） */
@@ -1162,6 +1164,22 @@ static Node *primary(void) {
         Token *t = tok;
         /* 函数调用：ident "(" */
         if (tok->next && tok_is(tok->next, "(")) {
+            /* __builtin_va_start(AP, LASTARG)：内建，不发射调用。
+             * AP 必须可寻址（va_list 局部）；展开在 codegen（当前函数帧）。 */
+            if (tok->len == 18 &&
+                strncmp(tok->loc, "__builtin_va_start", 18) == 0) {
+                tok = tok->next;
+                Node *n = new_node(ND_VASTART, t);
+                n->rhs = parse_call_args(&n->val);
+                if (n->val != 2)
+                    error_at(t, "__builtin_va_start expects 2 arguments");
+                n->lhs = n->rhs;               /* AP */
+                n->rhs = n->lhs->next;         /* LASTARG（忽略） */
+                n->ty = ty_void;
+                if (!is_lvalue(n->lhs))
+                    error_at(t, "__builtin_va_start: AP is not addressable");
+                return n;
+            }
             Func *f = find_func(t);
             if (f) {
                 tok = tok->next;      /* 跳到 ( */
@@ -1760,8 +1778,12 @@ static Node *init_local(Token **rest, Token *t, Type *ty, Node *target) {
     }
     if (ty->kind == TY_STRUCT) {
         Node head = {0}, *cur = &head;
-        if (!tok_is(t, "{"))
-            error_at(t, "struct initializer must be '{'");
+        if (!tok_is(t, "{")) {
+            /* 复制初始化（struct q = expr;）→ 整体赋值 */
+            Node *n = new_assign(target, assign(), t);
+            *rest = tok;
+            return n;
+        }
         tok = t->next;
         Member *m;
         for (m = ty->members; m; m = m->next) {
@@ -1794,8 +1816,11 @@ static Node *init_local(Token **rest, Token *t, Type *ty, Node *target) {
         return head.next;
     }
     if (ty->kind == TY_UNION) {
-        if (!tok_is(t, "{"))
-            error_at(t, "union initializer must be '{'");
+        if (!tok_is(t, "{")) {
+            Node *n = new_assign(target, assign(), t);
+            *rest = tok;
+            return n;
+        }
         tok = t->next;
         Node *n = NULL;
         if (ty->members)
@@ -2145,6 +2170,7 @@ static Func *funcdef(Type *fty, Token *t) {
     f->nargs = fty->nargs;
     f->is_variadic = fty->is_variadic;
     f->is_knr = fty->is_knr;
+    f->has_retbuf = (fty->base->kind == TY_STRUCT || fty->base->kind == TY_UNION);
 
     /* 本函数新的局部符号表、帧累计与标签表 */
     vars = NULL;
@@ -2193,7 +2219,7 @@ static Func *funcdef(Type *fty, Token *t) {
             f->param_names[i] = fty->param_names[i];
         /* 建参数 Var */
         for (int i = 0; i < fty->nargs; i++) {
-            locals_bytes += 4;
+            locals_bytes += (int)(((size_t)fty->param_tys[i]->size + 3) & ~3);
             Var *v = (Var *)calloc(1, sizeof(Var));
             if (!v) { fprintf(stderr, "out of memory\n"); exit(1); }
             v->name = fty->param_names[i];
@@ -2209,7 +2235,7 @@ static Func *funcdef(Type *fty, Token *t) {
             f->param_names[i] = fty->param_names[i];
             if (!f->param_names[i])
                 error_at(t, "parameter name missing in function definition");
-            locals_bytes += 4;                 /* 参数 = 局部变量 */
+            locals_bytes += (int)(((size_t)fty->param_tys[i]->size + 3) & ~3);
             Var *v = (Var *)calloc(1, sizeof(Var));
             if (!v) { fprintf(stderr, "out of memory\n"); exit(1); }
             v->name = f->param_names[i];
@@ -2471,19 +2497,21 @@ static void pre_scan_functions(void) {
             continue;
         if (tok_is(p, "typedef") || tok_is(p, "struct") || tok_is(p, "union") ||
             tok_is(p, "enum")) {
-            /* 跳过整条声明（嵌套 {} () 平衡） */
+            /* 跳过整条声明（嵌套 {} () 平衡；depth 回 0 的 } 即函数体结束） */
             int depth = 0;
             while (p->kind != TK_EOF) {
                 if (tok_is(p, "{") || tok_is(p, "("))
                     depth++;
                 else if (tok_is(p, "}") || tok_is(p, ")")) {
-                    if (depth == 0 && tok_is(p, "}"))
-                        break;   /* 函数体内的块结束？防御 */
                     depth--;
+                    if (depth == 0 && tok_is(p, "}"))
+                        break;   /* 声明/函数体结束 */
                 } else if (tok_is(p, ";") && depth == 0)
                     break;
                 p = p->next;
             }
+            if (p->kind == TK_EOF)
+                return;   /* 已到文件尾：continue 后外层 p=p->next 会解引用 NULL */
             continue;
         }
         if (tok_is(p, "int") || tok_is(p, "char") || tok_is(p, "unsigned") ||
