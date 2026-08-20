@@ -155,9 +155,9 @@ static void gen_expr(Node *n) {
         return;
     case ND_GVAR:
         if (n->ty->kind == TY_CHAR)
-            fprintf(out_asm, "    load_8 r1, [%s]     ; global char\n", n->name);
+            fprintf(out_asm, "    load_8 r1, [@%s]    ; global char\n", n->name);
         else
-            fprintf(out_asm, "    load_32 r1, [%s]    ; global\n", n->name);
+            fprintf(out_asm, "    load_32 r1, [@%s]   ; global\n", n->name);
         if (n->ty->kind == TY_CHAR) {
             fprintf(out_asm, "    lsl r1, r1, 24\n");
             fprintf(out_asm, "    %s r1, r1, 24   ; %s扩展\n",
@@ -166,16 +166,16 @@ static void gen_expr(Node *n) {
         }
         return;
     case ND_STR:
-        fprintf(out_asm, "    mov r1, s%lld       ; string\n", (long long)n->val);
+        fprintf(out_asm, "    mov r1, @s%lld      ; string\n", (long long)n->val);
         return;
     case ND_ADDR:
         /* 地址 → r1：局部 = r10-|offset|；全局/字符串 = label 地址 */
         if (n->lhs->kind == ND_VAR)
             fprintf(out_asm, "    sub r1, r10, %d    ; addr of var\n", -n->lhs->offset);
         else if (n->lhs->kind == ND_GVAR)
-            fprintf(out_asm, "    mov r1, %s         ; addr of global\n", n->lhs->name);
+            fprintf(out_asm, "    mov r1, @%s        ; addr of global\n", n->lhs->name);
         else
-            fprintf(out_asm, "    mov r1, s%lld       ; addr of string\n", (long long)n->lhs->val);
+            fprintf(out_asm, "    mov r1, @s%lld     ; addr of string\n", (long long)n->lhs->val);
         return;
     case ND_DEREF:
         gen_expr(n->lhs);
@@ -192,9 +192,9 @@ static void gen_expr(Node *n) {
         } else if (n->lhs->kind == ND_GVAR) {
             gen_expr(n->rhs);
             if (n->lhs->ty->kind == TY_CHAR)
-                fprintf(out_asm, "    store_8 [%s], r1   ; = global char\n", n->lhs->name);
+                fprintf(out_asm, "    store_8 [@%s], r1  ; = global char\n", n->lhs->name);
             else
-                fprintf(out_asm, "    store_32 [%s], r1   ; = global\n", n->lhs->name);
+                fprintf(out_asm, "    store_32 [@%s], r1  ; = global\n", n->lhs->name);
         } else {
             gen_expr(n->rhs);
             gen_addr(n->lhs);
@@ -453,11 +453,178 @@ static void emit_crt0(void) {
     fputs("\n    jmp halt\n", out_asm);
 }
 
-bool codegen(Program *prog, FILE *out) {
-    out_asm = out;
-    label_cnt = 0;
+/* ============ 游戏汇编器语法兼容 pass：数据引用 → 绝对地址 ============
+ *
+ * 游戏内置汇编器对 U16 立即数的 label 支持不一致：jmp/条件跳转/call 接受
+ * label（.isa: `(immediate | label)`），但 mov/load_32/store_32 的 imm
+ * 变体只接受数字（.isa: `(immediate)`）——数据位置的符号引用（s0、cursor）
+ * 会报 "not a register"。因此 codegen 发射数据引用时用 @name 哨兵，最后由
+ * 本 pass 解析为绝对字节地址（label 定义处记录的偏移）。控制流 label
+ * （jmp/je/call 目标）保留，游戏汇编器自己解析（游戏支持前向引用：
+ * main 先于 putstr 定义、jmp halt 等均能工作）。
+ *
+ * 布局依据（与游戏 .isa 逐字一致，两处布局相同，偏移可靠）：
+ * - 指令 4 字节；伪指令多词：push/pop = 8、call = 20、ret = 12
+ * - 全局 = U32 4 字节；字符串 = 内容字节数 + 结尾 U8 0
+ */
 
-    fprintf(out, "; symcc 输出 — SymphonyPlus 汇编\n");
+static int is_ident_char(char c) {
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+           (c >= '0' && c <= '9') || c == '_';
+}
+
+/* 标签映射：name → 字节偏移 */
+typedef struct { char *name; long off; } ResLabel;
+static ResLabel *rlabels;
+static int nrlabels, crlabels;
+
+static void rlabel_add(const char *name, size_t len, long off) {
+    if (nrlabels == crlabels) {
+        crlabels = crlabels ? crlabels * 2 : 64;
+        rlabels = (ResLabel *)realloc(rlabels, (size_t)crlabels * sizeof *rlabels);
+        if (!rlabels) { fprintf(stderr, "out of memory\n"); exit(1); }
+    }
+    rlabels[nrlabels].name = (char *)malloc(len + 1);
+    if (!rlabels[nrlabels].name) { fprintf(stderr, "out of memory\n"); exit(1); }
+    memcpy(rlabels[nrlabels].name, name, len);
+    rlabels[nrlabels].name[len] = 0;
+    rlabels[nrlabels].off = off;
+    nrlabels++;
+}
+
+static int rlabel_find(const char *name, size_t len, long *off) {
+    for (int i = 0; i < nrlabels; i++)
+        if (strlen(rlabels[i].name) == len &&
+            memcmp(rlabels[i].name, name, len) == 0) {
+            *off = rlabels[i].off;
+            return 1;
+        }
+    return 0;
+}
+
+/* 读一行（动态缓冲，支持长字符串数据行）；返回 0 = EOF */
+static int read_line(FILE *in, char **bufp, size_t *cap) {
+    size_t len = 0;
+    int c;
+    while ((c = fgetc(in)) != EOF) {
+        if (len + 2 > *cap) {
+            *cap = *cap ? *cap * 2 : 256;
+            *bufp = (char *)realloc(*bufp, *cap);
+            if (!*bufp) { fprintf(stderr, "out of memory\n"); exit(1); }
+        }
+        (*bufp)[len++] = (char)c;
+        if (c == '\n') break;
+    }
+    if (len == 0) return 0;
+    (*bufp)[len] = 0;
+    return 1;
+}
+
+/* 行为 label 定义（`name:` 结尾、无指令缩进）则返回名字长度，否则 0 */
+static size_t label_name_len(const char *line) {
+    size_t n = strlen(line);
+    while (n > 0 && (line[n - 1] == '\n' || line[n - 1] == '\r'))
+        n--;
+    if (n < 2 || line[n - 1] != ':')
+        return 0;
+    if (line[0] == ' ' || line[0] == ';' || line[0] == '"')
+        return 0;
+    for (size_t i = 0; i < n - 1; i++)
+        if (!is_ident_char(line[i]))
+            return 0;
+    return n - 1;
+}
+
+/* 一行汇编的字节长度：label/注释/空行 = 0；指令 = 4；
+ * 伪指令 push/pop/call/ret 是多词编码（8/8/20/12，游戏 .isa 与
+ * asm.c 展开逐字一致）；U8/U16/U32 = 1/2/4；字符串行 = 内容字节数 */
+static long line_size(const char *line) {
+    const char *s = line;
+    while (*s == ' ') s++;
+    if (*s == ';' || *s == '\n' || *s == 0)
+        return 0;
+    if (label_name_len(line))       /* label 定义行（`name:`，无缩进）：0 字节 */
+        return 0;
+    if (*s == '"') {
+        const char *q = strchr(s + 1, '"');
+        if (!q) {
+            fprintf(stderr, "codegen: 字符串数据行缺闭合引号: %s", line);
+            exit(1);
+        }
+        return (long)(q - s - 1);
+    }
+    if (strncmp(s, "U8 ", 3) == 0) return 1;
+    if (strncmp(s, "U16 ", 4) == 0) return 2;
+    if (strncmp(s, "U32 ", 4) == 0) return 4;
+    if (strncmp(s, "push ", 5) == 0) return 8;
+    if (strncmp(s, "pop ", 4) == 0) return 8;
+    if (strncmp(s, "call ", 5) == 0) return 20;
+    if (strncmp(s, "ret", 3) == 0) return 12;
+    return 4;
+}
+
+/* 把一行中的 @name 数据引用替换为绝对地址，写入 out；注释/字符串原样 */
+static void emit_resolved_line(const char *line, FILE *out) {
+    for (const char *p = line; *p; ) {
+        if (*p == ';' || *p == '"') {           /* 注释与字符串数据行原样 */
+            fputs(p, out);
+            return;
+        }
+        if (*p == '@') {
+            const char *name = p + 1;
+            size_t nl = 0;
+            while (is_ident_char(name[nl]))
+                nl++;
+            long off;
+            if (!rlabel_find(name, nl, &off)) {
+                fprintf(stderr, "codegen: 未解析的数据引用 @%.*s\n",
+                        (int)nl, name);
+                exit(1);
+            }
+            if (off > 0xFFFF) {
+                fprintf(stderr, "codegen: 数据地址 0x%lx 超出 16 位寻址"
+                        "（M1 程序过大）\n", off);
+                exit(1);
+            }
+            fprintf(out, "0x%lx", off);
+            p = name + nl;
+        } else {
+            fputc(*p, out);
+            p++;
+        }
+    }
+}
+
+/* 两遍：先算所有 label 偏移，再替换 @ 引用。in = 已发射文本，out = 最终输出 */
+static void resolve_refs(FILE *in, FILE *out) {
+    char *line = NULL;
+    size_t cap = 0;
+    long loc = 0;
+
+    rewind(in);
+    while (read_line(in, &line, &cap)) {
+        size_t nl = label_name_len(line);
+        if (nl)
+            rlabel_add(line, nl, loc);
+        loc += line_size(line);
+    }
+
+    rewind(in);
+    while (read_line(in, &line, &cap))
+        emit_resolved_line(line, out);
+    free(line);
+}
+
+bool codegen(Program *prog, FILE *out) {
+    /* 先发射到临时文件，最后统一过布局 pass（数据引用 → 绝对地址）。
+     * tmpfile() 在 Windows 上为二进制模式，不做 CRLF 翻译 */
+    FILE *tmp = tmpfile();
+    if (!tmp) { fprintf(stderr, "codegen: tmpfile failed\n"); exit(1); }
+    out_asm = tmp;
+    label_cnt = 0;
+    nrlabels = 0;
+
+    fprintf(out_asm, "; symcc 输出 — SymphonyPlus 汇编\n");
 
     emit_crt0();
 
@@ -480,5 +647,9 @@ bool codegen(Program *prog, FILE *out) {
 
     fprintf(out_asm, "\nhalt:\n");
     fprintf(out_asm, "    jmp halt\n");
+
+    /* 布局 pass：@name 数据引用 → 绝对地址（游戏汇编器只认数字） */
+    resolve_refs(tmp, out);
+    fclose(tmp);
     return true;
 }
