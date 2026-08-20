@@ -123,6 +123,20 @@ static Token *str_head, **str_tail = &str_head;
 /* 声明修饰标志（declspec 置位，调用方消费后复位） */
 static bool decl_is_typedef, decl_is_static, decl_is_extern;
 
+/* ---- Task 3：语句级状态（函数级，funcdef 重置） ---- */
+
+/* goto/标签表：名字 → 编号（Lg%d）。goto 前向引用先注册，label 定义置 defined */
+typedef struct LblEnt { struct LblEnt *next; char *name; int len; int num; bool defined; } LblEnt;
+static LblEnt *lbls;
+static int lbl_num;          /* 标签编号计数器（goto/label/case 共用 Lg%d 命名空间） */
+
+/* break/continue 合法性：breakable = 循环+switch，loops = 仅循环 */
+static int breakable_depth, loop_depth;
+
+/* switch 的 case 收集器栈（嵌套 switch 各占一层；stmt 的 case 注册到栈顶） */
+static Node *case_stack[32];
+static int case_depth;
+
 /* 类型解析前向声明（eval_unary 的 sizeof/cast 用） */
 static Type *declspec(void);
 static Type *declarator(Type *base, Token **namep);
@@ -168,6 +182,70 @@ static char *xstrndup(const char *s, size_t n) {
     memcpy(p, s, n);
     p[n] = 0;
     return p;
+}
+
+/* 深拷贝表达式子树（复合赋值/++-- 的 lvalue 双份展开用）。
+ * 表达式节点 next 恒为 NULL（链只属于语句列表），不复制。 */
+static Node *clone_node(Node *n) {
+    if (!n)
+        return NULL;
+    Node *c = (Node *)malloc(sizeof(Node));
+    if (!c) { fprintf(stderr, "out of memory\n"); exit(1); }
+    *c = *n;
+    c->lhs = clone_node(n->lhs);
+    c->rhs = clone_node(n->rhs);
+    c->els = clone_node(n->els);
+    c->body = clone_node(n->body);
+    return c;
+}
+
+/* 隐藏临时局部变量（后缀 ++/--、switch 条件）：分配 4 字节帧槽，
+ * 返回 ND_VAR 节点（ty 由调用方设置） */
+static Node *hidden_lvar(Type *ty) {
+    locals_bytes += 4;
+    Node *v = new_node(ND_VAR, NULL);
+    v->offset = -locals_bytes;
+    v->ty = ty;
+    return v;
+}
+
+/* 标签名 → 编号（goto 前向引用也先注册）；定义时置 defined */
+static int label_of(Token *t) {
+    for (LblEnt *e = lbls; e; e = e->next)
+        if (e->len == t->len && strncmp(e->name, t->loc, (size_t)t->len) == 0)
+            return e->num;
+    LblEnt *e = (LblEnt *)calloc(1, sizeof(LblEnt));
+    if (!e) { fprintf(stderr, "out of memory\n"); exit(1); }
+    e->name = xstrndup(t->loc, (size_t)t->len);
+    e->len = t->len;
+    e->num = lbl_num++;
+    e->next = lbls;
+    lbls = e;
+    return e->num;
+}
+
+/* case/default 注册到当前 switch 收集器（检查重复 case 值） */
+static void register_case(Node *n, Token *t) {
+    if (case_depth == 0)
+        error_at(t, "case outside switch");
+    Node *list = case_stack[case_depth - 1];
+    if (n->kind == ND_CASE) {
+        for (Node *c = list; c; c = c->next)
+            if (c->kind == ND_CASE && c->val == n->val)
+                error_at(t, "duplicate case value");
+    } else {
+        for (Node *c = list; c; c = c->next)
+            if (c->kind == ND_DEFAULT)
+                error_at(t, "duplicate default");
+    }
+    Node *head = case_stack[case_depth - 1];
+    if (head) {
+        Node *cur = head;
+        while (cur->next) cur = cur->next;
+        cur->next = n;
+    } else {
+        case_stack[case_depth - 1] = n;
+    }
 }
 
 /* ---------- 名称表 ---------- */
@@ -270,6 +348,10 @@ static bool is_declspec_start(Token *t) {
 /* ---------- 常量表达式求值（初始化器/数组长度/位域宽度） ---------- */
 
 static Node *unary(void);   /* sizeof 表达式形式用 */
+static bool is_lvalue(Node *n);   /* ++/-- 与赋值目标检查 */
+static Node *new_assign(Node *lhs, Node *rhs, Token *t);  /* 后缀 ++/-- 用 */
+static Node *assign(void);   /* 复合赋值 rhs 用 */
+static char *xstrndup(const char *s, size_t n);  /* label_of 用 */
 
 static int64_t eval_const(Token **rest, Token *t);   /* 主入口 */
 static int64_t eval_ternary(Token **cur);
@@ -983,11 +1065,24 @@ static Node *new_binop(int kind, Node *lhs, Node *rhs, Token *t) {
             return n;
         }
     }
-    /* 算术：任一侧 unsigned → 结果 unsigned（C 语义） */
+    /* 算术/位运算：任一侧 unsigned → 结果 unsigned（C 语义） */
     if ((kind == ND_ADD || kind == ND_SUB || kind == ND_MUL ||
-         kind == ND_DIV || kind == ND_MOD) &&
+         kind == ND_DIV || kind == ND_MOD ||
+         kind == ND_BITAND || kind == ND_BITOR || kind == ND_BITXOR) &&
         (lhs->ty->is_unsigned || rhs->ty->is_unsigned)) {
         n->ty = ty_uint();
+        return n;
+    }
+    if (kind == ND_LSL || kind == ND_LSR) {
+        /* 移位结果类型 = 左操作数（codegen 按 is_unsigned 选 asr/lsr） */
+        n->ty = lhs->ty;
+        return n;
+    }
+    if ((kind == ND_LT || kind == ND_LE || kind == ND_GT || kind == ND_GE) &&
+        (lhs->ty->is_unsigned || rhs->ty->is_unsigned)) {
+        /* 无符号比较：codegen 按 ty->is_unsigned 选 jb/ja 族 */
+        n->ty = ty_uint();
+        return n;
     }
     return n;
 }
@@ -998,11 +1093,11 @@ static Node *parse_call_args(int64_t *nargs) {
     Node head = {0}, *cur = &head;
     int n = 0;
     if (!tok_is(tok, ")")) {
-        cur = cur->next = expr();
+        cur = cur->next = assign();   /* 实参 = assignment-expression（逗号分隔） */
         n = 1;
         while (tok_is(tok, ",")) {
             tok = tok->next;
-            cur = cur->next = expr();
+            cur = cur->next = assign();
             n++;
         }
     }
@@ -1159,11 +1254,11 @@ static Node *new_dyncall(Node *fn, Token *t) {
     skip("(");
     if (!tok_is(tok, ")")) {
         Node head = {0}, *cur = &head;
-        cur = cur->next = expr();
+        cur = cur->next = assign();   /* 实参 = assignment-expression（逗号分隔） */
         n->val = 1;
         while (tok_is(tok, ",")) {
             tok = tok->next;
-            cur = cur->next = expr();
+            cur = cur->next = assign();
             n->val++;
         }
         n->rhs = head.next;
@@ -1244,6 +1339,26 @@ static Node *postfix(void) {
             }
             error_at(t, "call of non-function");
         }
+        if (tok_is(tok, "++") || tok_is(tok, "--")) {
+            /* 后缀：t = x; x = x ± 1; 结果 = t（隐藏临时槽）。
+             * ND_COMMA 链顺序求值，值类型 = x 的类型 */
+            Token *t = tok;
+            bool inc = tok_is(tok, "++");
+            tok = tok->next;
+            if (!is_lvalue(n))
+                error_at(t, "increment/decrement of non-lvalue");
+            Node *tmp = hidden_lvar(n->ty);
+            Node *a1 = new_assign(clone_node(tmp), clone_node(n), t);
+            Node *opn = new_binop(inc ? ND_ADD : ND_SUB, clone_node(n),
+                                  new_num(1, t), t);
+            Node *a2 = new_assign(clone_node(n), opn, t);
+            Node *mid = new_binary(ND_COMMA, a1, a2, t);
+            mid->ty = a2->ty;
+            Node *res = new_binary(ND_COMMA, mid, clone_node(tmp), t);
+            res->ty = tmp->ty;
+            n = res;
+            continue;
+        }
         return n;
     }
 }
@@ -1274,6 +1389,18 @@ static Node *unary(void) {
     if (tok_is(tok, "+")) {
         tok = tok->next;
         return unary();
+    }
+    if (tok_is(tok, "++") || tok_is(tok, "--")) {
+        /* 前缀：x = x ± 1（值 = 新值）。指针步长由 new_binop 缩放 */
+        Token *t = tok;
+        bool inc = tok_is(tok, "++");
+        tok = tok->next;
+        Node *x = unary();
+        if (!is_lvalue(x))
+            error_at(t, "increment/decrement of non-lvalue");
+        Node *opn = new_binop(inc ? ND_ADD : ND_SUB, clone_node(x),
+                              new_num(1, t), t);
+        return new_assign(x, opn, t);
     }
     if (tok_is(tok, "&")) {
         Token *t = tok;
@@ -1374,26 +1501,44 @@ static Node *additive(void) {
     }
 }
 
-/* relational = additive (("<" | "<=" | ">" | ">=") additive)* */
-static Node *relational(void) {
+/* shift = additive (("<<" | ">>") additive)* */
+static Node *shift(void) {
     Node *n = additive();
+    for (;;) {
+        if (tok_is(tok, "<<")) {
+            Token *t = tok;
+            tok = tok->next;
+            n = new_binop(ND_LSL, n, additive(), t);
+        } else if (tok_is(tok, ">>")) {
+            Token *t = tok;
+            tok = tok->next;
+            n = new_binop(ND_LSR, n, additive(), t);
+        } else {
+            return n;
+        }
+    }
+}
+
+/* relational = shift (("<" | "<=" | ">" | ">=") shift)* */
+static Node *relational(void) {
+    Node *n = shift();
     for (;;) {
         if (tok_is(tok, "<")) {
             Token *t = tok;
             tok = tok->next;
-            n = new_binop(ND_LT, n, additive(), t);
+            n = new_binop(ND_LT, n, shift(), t);
         } else if (tok_is(tok, "<=")) {
             Token *t = tok;
             tok = tok->next;
-            n = new_binop(ND_LE, n, additive(), t);
+            n = new_binop(ND_LE, n, shift(), t);
         } else if (tok_is(tok, ">")) {
             Token *t = tok;
             tok = tok->next;
-            n = new_binop(ND_GT, n, additive(), t);
+            n = new_binop(ND_GT, n, shift(), t);
         } else if (tok_is(tok, ">=")) {
             Token *t = tok;
             tok = tok->next;
-            n = new_binop(ND_GE, n, additive(), t);
+            n = new_binop(ND_GE, n, shift(), t);
         } else {
             return n;
         }
@@ -1418,13 +1563,46 @@ static Node *equality(void) {
     }
 }
 
-/* logand = equality ("&&" equality)* */
-static Node *logand(void) {
+/* bitand = equality ("&" equality)* */
+static Node *bitand(void) {
     Node *n = equality();
+    while (tok_is(tok, "&")) {
+        Token *t = tok;
+        tok = tok->next;
+        n = new_binop(ND_BITAND, n, equality(), t);
+    }
+    return n;
+}
+
+/* bitxor = bitand ("^" bitand)* */
+static Node *bitxor(void) {
+    Node *n = bitand();
+    while (tok_is(tok, "^")) {
+        Token *t = tok;
+        tok = tok->next;
+        n = new_binop(ND_BITXOR, n, bitand(), t);
+    }
+    return n;
+}
+
+/* bitor = bitxor ("|" bitxor)* */
+static Node *bitor(void) {
+    Node *n = bitxor();
+    while (tok_is(tok, "|")) {
+        Token *t = tok;
+        tok = tok->next;
+        n = new_binop(ND_BITOR, n, bitxor(), t);
+    }
+    return n;
+}
+
+/* logand = bitor ("&&" bitor)* */
+static Node *logand(void) {
+    Node *n = bitor();
     while (tok_is(tok, "&&")) {
         Token *t = tok;
         tok = tok->next;
-        n = new_binop(ND_LOGAND, n, equality(), t);
+        n = new_binop(ND_LOGAND, n, bitor(), t);
     }
     return n;
 }
@@ -1440,7 +1618,6 @@ static Node *logor(void) {
     return n;
 }
 
-/* assign = logor ("=" assign)? */
 /* 赋值表达式节点：ty = 目标类型（codegen 的 ND_ASSIGN 依赖） */
 static Node *new_assign(Node *lhs, Node *rhs, Token *t) {
     Node *an = new_binary(ND_ASSIGN, lhs, rhs, t);
@@ -1448,22 +1625,82 @@ static Node *new_assign(Node *lhs, Node *rhs, Token *t) {
     return an;
 }
 
+static bool is_lvalue(Node *n) {
+    return n->kind == ND_VAR || n->kind == ND_GVAR ||
+           n->kind == ND_DEREF || n->kind == ND_MEMBER;
+}
+
+/* lhs op= rhs → lhs = lhs op rhs（lhs 表达式克隆两份；无副作用 lvalue
+ * 求两次地址等价，C89 复合赋值要求 lvalue 求值一次，此处宽松接受） */
+static Node *expand_compound(Node *lhs, Token *t, int opkind) {
+    Node *l1 = clone_node(lhs);
+    Node *l2 = clone_node(lhs);
+    Node *r = assign();
+    Node *opn = new_binop(opkind, l1, r, t);
+    return new_assign(l2, opn, t);
+}
+
+/* ternary = logor ("?" expr ":" ternary)? —— C89 ':' 后是 conditional */
+static Node *ternary(void) {
+    Node *cond = logor();
+    if (tok_is(tok, "?")) {
+        Token *t = tok;
+        tok = tok->next;
+        Node *then = expr();
+        skip(":");
+        Node *els = ternary();
+        Node *n = new_node(ND_COND, t);
+        n->lhs = cond;
+        n->rhs = then;
+        n->els = els;
+        n->ty = then->ty;
+        return n;
+    }
+    return cond;
+}
+
+/* assign = ternary (("=" | op "=") assign)? */
 static Node *assign(void) {
-    Node *n = logor();
+    Node *n = ternary();
     if (tok_is(tok, "=")) {
         Token *t = tok;
         tok = tok->next;
-        if (n->kind != ND_VAR && n->kind != ND_GVAR &&
-            n->kind != ND_DEREF && n->kind != ND_MEMBER)
+        if (!is_lvalue(n))
             error_at(t, "assignment target is not addressable");
         n = new_assign(n, assign(), t);
+        return n;
+    }
+    int opkind = 0;
+    if (tok_is(tok, "+=")) opkind = ND_ADD;
+    else if (tok_is(tok, "-=")) opkind = ND_SUB;
+    else if (tok_is(tok, "*=")) opkind = ND_MUL;
+    else if (tok_is(tok, "/=")) opkind = ND_DIV;
+    else if (tok_is(tok, "%=")) opkind = ND_MOD;
+    else if (tok_is(tok, "&=")) opkind = ND_BITAND;
+    else if (tok_is(tok, "|=")) opkind = ND_BITOR;
+    else if (tok_is(tok, "^=")) opkind = ND_BITXOR;
+    else if (tok_is(tok, "<<=")) opkind = ND_LSL;
+    else if (tok_is(tok, ">>=")) opkind = ND_LSR;
+    if (opkind) {
+        Token *t = tok;
+        tok = tok->next;
+        if (!is_lvalue(n))
+            error_at(t, "assignment target is not addressable");
+        n = expand_compound(n, t, opkind);
     }
     return n;
 }
 
-/* expr = assign */
+/* expr = assign ("," assign)* */
 static Node *expr(void) {
-    return assign();
+    Node *n = assign();
+    while (tok_is(tok, ",")) {
+        Token *t = tok;
+        tok = tok->next;
+        n = new_binary(ND_COMMA, n, assign(), t);
+        n->ty = n->rhs->ty;
+    }
+    return n;
 }
 
 /* ---------- 语句 ---------- */
@@ -1567,8 +1804,8 @@ static Node *init_local(Token **rest, Token *t, Type *ty, Node *target) {
         *rest = tok;
         return n;
     }
-    /* 标量 */
-    Node *n = new_assign(target, expr(), t);
+    /* 标量：初始化器 = assignment-expression（花括号逗号是分隔符） */
+    Node *n = new_assign(target, assign(), t);
     *rest = tok;
     return n;
 }
@@ -1731,9 +1968,13 @@ static Node *stmt(void) {
         skip("(");
         Node *cond = expr();
         skip(")");
+        loop_depth++;
+        breakable_depth++;
         Node *n = new_node(ND_WHILE, t);
         n->lhs = cond;
         n->rhs = stmt();
+        breakable_depth--;
+        loop_depth--;
         return n;
     }
     if (tok_is_kw(tok, "for")) {
@@ -1750,11 +1991,110 @@ static Node *stmt(void) {
         if (!tok_is(tok, ")"))
             inc = expr();
         skip(")");
+        loop_depth++;
+        breakable_depth++;
         Node *n = new_node(ND_FOR, t);
         n->lhs = init;
         n->rhs = cond;
         n->els = inc;
         n->body = stmt();
+        breakable_depth--;
+        loop_depth--;
+        return n;
+    }
+    if (tok_is_kw(tok, "do")) {
+        Token *t = tok;
+        tok = tok->next;
+        loop_depth++;
+        breakable_depth++;
+        Node *n = new_node(ND_DOWHILE, t);
+        n->lhs = stmt();
+        breakable_depth--;
+        loop_depth--;
+        skip("while");
+        skip("(");
+        n->rhs = expr();
+        skip(")");
+        skip(";");
+        return n;
+    }
+    if (tok_is_kw(tok, "switch")) {
+        Token *t = tok;
+        tok = tok->next;
+        skip("(");
+        Node *cond = expr();
+        skip(")");
+        breakable_depth++;
+        /* case 收集器入栈（stmt 的 case/default 注册到栈顶） */
+        if (case_depth >= 32)
+            error_at(t, "switch nesting too deep");
+        case_stack[case_depth++] = NULL;
+        Node *body = stmt();
+        Node *cases = case_stack[--case_depth];
+        breakable_depth--;
+        Node *n = new_node(ND_SWITCH, t);
+        n->lhs = cond;
+        n->rhs = cases;
+        n->els = body;
+        n->offset = -hidden_lvar(ty_int)->offset;   /* 条件值槽 */
+        return n;
+    }
+    if (tok_is_kw(tok, "case") || tok_is_kw(tok, "default")) {
+        /* case 常量: / default: —— 标签节点，注册到当前 switch 收集器；
+         * 其后的语句在语句链中顺序生成（fallthrough 天然成立） */
+        Token *t = tok;
+        bool is_case = tok_is_kw(tok, "case");
+        tok = tok->next;
+        Node *n = new_node(is_case ? ND_CASE : ND_DEFAULT, t);
+        if (is_case) {
+            Node *v = assign();   /* 常量表达式（逗号非法） */
+            if (v->kind != ND_NUM)
+                error_at(v->tok, "case value is not a constant");
+            n->val = v->val;
+        }
+        skip(":");
+        n->num = lbl_num++;
+        register_case(n, t);
+        return n;
+    }
+    if (tok_is_kw(tok, "break")) {
+        Token *t = tok;
+        tok = tok->next;
+        skip(";");
+        if (!breakable_depth)
+            error_at(t, "break outside loop or switch");
+        return new_node(ND_BREAK, t);
+    }
+    if (tok_is_kw(tok, "continue")) {
+        Token *t = tok;
+        tok = tok->next;
+        skip(";");
+        if (!loop_depth)
+            error_at(t, "continue outside loop");
+        return new_node(ND_CONTINUE, t);
+    }
+    if (tok_is_kw(tok, "goto")) {
+        Token *t = tok;
+        tok = tok->next;
+        if (tok->kind != TK_IDENT)
+            error_at(tok, "expected label name");
+        Node *n = new_node(ND_GOTO, t);
+        n->num = label_of(tok);
+        tok = tok->next;
+        skip(";");
+        return n;
+    }
+    if (tok->kind == TK_IDENT && tok->next && tok_is(tok->next, ":")) {
+        /* label: 语句（label 定义） */
+        Token *t = tok;
+        Node *n = new_node(ND_LABEL, t);
+        n->num = label_of(t);
+        /* 置 defined：可能已被前向 goto 注册 */
+        for (LblEnt *e = lbls; e; e = e->next)
+            if (e->num == n->num)
+                e->defined = true;
+        tok = tok->next->next;
+        n->rhs = stmt();
         return n;
     }
     if (tok_is(tok, "{")) {
@@ -1806,9 +2146,13 @@ static Func *funcdef(Type *fty, Token *t) {
     f->is_variadic = fty->is_variadic;
     f->is_knr = fty->is_knr;
 
-    /* 本函数新的局部符号表与帧累计 */
+    /* 本函数新的局部符号表、帧累计与标签表 */
     vars = NULL;
     locals_bytes = 0;
+    lbls = NULL;
+    lbl_num = 0;
+    breakable_depth = loop_depth = 0;
+    case_depth = 0;
 
     /* 参数 → 局部变量 */
     if (fty->is_knr) {
@@ -1888,11 +2232,22 @@ static Func *funcdef(Type *fty, Token *t) {
             error_at(tok, "unclosed '{'");
         Node *s = stmt();
         if (s) {
-            cur->next = s;
-            cur = s;
+            /* stmt() 可能返回多节点链（声明初始化器）——推进到链尾 */
+            while (s) {
+                cur->next = s;
+                cur = s;
+                s = s->next;
+            }
         }
     }
     skip("}");
+    /* 未定义标签检查（goto 前向引用已注册但无定义） */
+    for (LblEnt *e = lbls; e; e = e->next)
+        if (!e->defined) {
+            fprintf(stderr, "parse error at \"%.*s\": undefined label '%.*s'\n",
+                    t->len, t->loc, e->len, e->name);
+            exit(1);
+        }
     f->body = head.next;
     f->frame_size = locals_bytes;
     return f;

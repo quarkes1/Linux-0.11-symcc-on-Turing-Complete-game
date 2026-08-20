@@ -101,6 +101,19 @@ int main(void) {
     compile_and_run("tests/test_fnptr.c", 7, NULL, 0, "");
     compile_and_run("tests/test_static_local.c", 21, NULL, 0, "");
     compile_and_run("tests/test_sizeof_cast.c", 69, NULL, 0, "");
+    /* M2 Task 3 验收：字面量 / 位运算 / 复合赋值 / ++-- / ?: 逗号 /
+     * sizeof / break-continue / do-while / switch / goto */
+    compile_and_run("tests/test_char_literal.c", 66, NULL, 0, "");
+    compile_and_run("tests/test_hex_octal.c", 24, NULL, 0, "");
+    compile_and_run("tests/test_bitwise.c", 814, NULL, 0, "");
+    compile_and_run("tests/test_compound_assign.c", 31, NULL, 0, "runtime/divsi3.c");
+    compile_and_run("tests/test_inc_dec.c", 28, NULL, 0, "");
+    compile_and_run("tests/test_ternary_comma.c", 100, NULL, 0, "");
+    compile_and_run("tests/test_sizeof.c", 56, NULL, 0, "");
+    compile_and_run("tests/test_break_continue_do.c", 7, NULL, 0, "");
+    compile_and_run("tests/test_break_while_for.c", 27, NULL, 0, "runtime/divsi3.c");
+    compile_and_run("tests/test_switch.c", 25, NULL, 0, "");
+    compile_and_run("tests/test_goto.c", 15, NULL, 0, "");
     printf("ALL TESTS PASSED\n");
     return 0;
 }

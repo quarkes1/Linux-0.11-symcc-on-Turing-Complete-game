@@ -132,6 +132,21 @@ enum {
     ND_MEMBER,   /* 成员访问：lhs = 聚合对象（求地址），val = 成员字节偏移；bit_offset/bit_width 位域 */
     ND_CAST,     /* 类型转换：lhs = 表达式，ty = 目标类型 */
     ND_BITNOT,   /* 一元 ~ */
+    ND_BITAND,   /* & */
+    ND_BITOR,    /* | */
+    ND_BITXOR,   /* ^ */
+    ND_LSL,      /* << */
+    ND_LSR,      /* >>（结果类型 is_unsigned → lsr，否则 asr） */
+    ND_COND,     /* ?: lhs=条件 rhs=then els=else（值 = 所选臂） */
+    ND_COMMA,    /* 逗号：lhs 先求值丢弃，值 = rhs */
+    ND_LABEL,    /* 语句：num = 标签编号，rhs = 后续语句 */
+    ND_GOTO,     /* 语句：num = 标签编号 */
+    ND_SWITCH,   /* 语句：lhs=条件 rhs=case 链（ND_CASE/ND_DEFAULT）els=体，offset=隐藏条件槽 */
+    ND_CASE,     /* 语句/链节点：val=case 值，num=标签编号；case 后的语句在 body 链中顺序生成 */
+    ND_DEFAULT,  /* 同上（无值） */
+    ND_BREAK,    /* 语句：jmp 最内层循环/switch 出口 */
+    ND_CONTINUE, /* 语句：jmp 最内层循环条件/增量处 */
+    ND_DOWHILE,  /* 语句：lhs=体，rhs=条件 */
 };
 
 typedef struct Node {
@@ -144,7 +159,8 @@ typedef struct Node {
     Token *tok;    /* 生成诊断与代码注释用 */
     Type *ty;      /* 表达式/语句类型 */
     int64_t val;   /* ND_NUM / ND_CALL 实参数 / ND_STR 编号 / ND_MEMBER 字节偏移 */
-    int offset;    /* ND_VAR：相对 sp 的负偏移 */
+    int offset;    /* ND_VAR：相对 sp 的负偏移；ND_SWITCH：隐藏条件槽 */
+    int num;       /* ND_LABEL / ND_GOTO / ND_CASE / ND_DEFAULT：标签编号 */
     int bit_offset;  /* ND_MEMBER 位域（-1 = 非位域） */
     int bit_width;   /* ND_MEMBER 位域宽度（-1 = 非位域） */
     char *name;    /* ND_GVAR / ND_CALL：标识符名（malloc；ND_CALL 动态调用为 NULL） */

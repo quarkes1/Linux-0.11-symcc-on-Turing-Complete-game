@@ -28,6 +28,12 @@
 static FILE *out_asm;
 static int label_cnt;
 
+/* break/continue 目标标签栈（循环/switch 压入，gen_stmt 消费） */
+static const char *brk_lbls[64];
+static int brk_depth;
+static const char *cont_lbls[64];
+static int cont_depth;
+
 static void err_imm(Token *t, int64_t val) {
     fprintf(stderr, "constant too large for 16-bit immediate: %lld (%.*s)\n",
             (long long)val, t->len, t->loc);
@@ -70,6 +76,7 @@ static void gen_num(int64_t val, Token *t) {
 static void gen_expr(Node *n);
 static void gen_member_addr(Node *n);
 static void gen_laddr(Node *n);
+static void gen_branch_zero(Node *cond, const char *label, bool jump_if_zero);
 
 /* 左值地址 → r9。局部变量相对帧基址 r10（函数入口 sp）——push/pop 会
  * 改变 sp，若相对 sp 则压栈后变量错位；全局/字符串 = label 地址。 */
@@ -378,6 +385,11 @@ static void gen_expr(Node *n) {
     case ND_LE:
     case ND_GT:
     case ND_GE:
+    case ND_BITAND:
+    case ND_BITOR:
+    case ND_BITXOR:
+    case ND_LSL:
+    case ND_LSR:
         /* 右操作数 → push → 左操作数 → pop r2 → r1 op r2 */
         gen_expr(n->rhs);
         fprintf(out_asm, "    push r1            ; 暂存右操作数\n");
@@ -401,13 +413,44 @@ static void gen_expr(Node *n) {
                 fprintf(out_asm, "    add sp, sp, 8      ; 清理实参\n");
             }
             return;
+        case ND_BITAND: fprintf(out_asm, "    and r1, r1, r2     ; &\n"); return;
+        case ND_BITOR:  fprintf(out_asm, "    or r1, r1, r2      ; |\n"); return;
+        case ND_BITXOR: fprintf(out_asm, "    xor r1, r1, r2     ; ^\n"); return;
+        case ND_LSL:    fprintf(out_asm, "    lsl r1, r1, r2     ; <<\n"); return;
+        case ND_LSR:
+            /* unsigned 右移 lsr（逻辑），有符号 asr（算术） */
+            fprintf(out_asm, "    %s r1, r1, r2     ; >>（%s）\n",
+                    n->ty->is_unsigned ? "lsr" : "asr",
+                    n->ty->is_unsigned ? "无符号" : "有符号");
+            return;
         case ND_EQ:  gen_compare("je", "=="); return;
         case ND_NE:  gen_compare("jne", "!="); return;
-        case ND_LT:  gen_compare("jl", "<"); return;   /* 有符号 */
-        case ND_LE:  gen_compare("jle", "<="); return;
-        case ND_GT:  gen_compare("jg", ">"); return;
-        case ND_GE:  gen_compare("jge", ">="); return;
+        case ND_LT:
+            gen_compare(n->ty->is_unsigned ? "jb" : "jl", "<"); return;
+        case ND_LE:
+            gen_compare(n->ty->is_unsigned ? "jbe" : "jle", "<="); return;
+        case ND_GT:
+            gen_compare(n->ty->is_unsigned ? "ja" : "jg", ">"); return;
+        case ND_GE:
+            gen_compare(n->ty->is_unsigned ? "jae" : "jge", ">="); return;
         }
+        return;
+    case ND_COND: {
+        /* ?: 条件 → 跳两臂，值在 r1 */
+        const char *Lelse = new_label();
+        const char *Lend = new_label();
+        gen_branch_zero(n->lhs, Lelse, true);
+        gen_expr(n->rhs);
+        fprintf(out_asm, "    jmp %s\n", Lend);
+        emit_label(Lelse);
+        if (n->els)
+            gen_expr(n->els);
+        emit_label(Lend);
+        return;
+    }
+    case ND_COMMA:
+        gen_expr(n->lhs);        /* 求值丢弃 */
+        gen_expr(n->rhs);        /* 值 = 右 */
         return;
     default:
         fprintf(stderr, "codegen: unhandled node kind %d\n", n->kind);
@@ -460,26 +503,109 @@ static void gen_stmt(Node *n) {
     case ND_WHILE: {
         const char *Lbegin = new_label();
         const char *Lend = new_label();
+        /* continue → 条件处（Lbegin）；break → Lend */
+        brk_lbls[brk_depth++] = Lend;
+        cont_lbls[cont_depth++] = Lbegin;
         emit_label(Lbegin);
         gen_branch_zero(n->lhs, Lend, true);
         gen_stmts(n->rhs);
         fprintf(out_asm, "    jmp %s\n", Lbegin);
         emit_label(Lend);
+        cont_depth--;
+        brk_depth--;
         return;
     }
     case ND_FOR: {
         const char *Lbegin = new_label();
+        const char *Lcont = new_label();
         const char *Lend = new_label();
         if (n->lhs)
             gen_expr(n->lhs);
         emit_label(Lbegin);
         if (n->rhs)
             gen_branch_zero(n->rhs, Lend, true);
+        brk_lbls[brk_depth++] = Lend;
+        cont_lbls[cont_depth++] = Lcont;
         gen_stmts(n->body);
+        cont_depth--;
+        brk_depth--;
+        emit_label(Lcont);            /* continue → 增量处 */
         if (n->els)
             gen_expr(n->els);
         fprintf(out_asm, "    jmp %s\n", Lbegin);
         emit_label(Lend);
+        return;
+    }
+    case ND_DOWHILE: {
+        const char *Lbegin = new_label();
+        const char *Lcond = new_label();
+        const char *Lend = new_label();
+        brk_lbls[brk_depth++] = Lend;
+        cont_lbls[cont_depth++] = Lcond;   /* continue → 条件处 */
+        emit_label(Lbegin);
+        gen_stmts(n->lhs);
+        emit_label(Lcond);
+        gen_branch_zero(n->rhs, Lend, true);
+        fprintf(out_asm, "    jmp %s\n", Lbegin);
+        emit_label(Lend);
+        cont_depth--;
+        brk_depth--;
+        return;
+    }
+    case ND_SWITCH: {
+        /* 条件 → 隐藏槽 → 体（第一个 case 前的语句无条件执行）→
+         * 顺序比较链 → 各 case 标签 + 剩余体 → 出口 */
+        const char *Lend = new_label();
+        char *Ldef = NULL;
+        gen_expr(n->lhs);
+        fprintf(out_asm, "    sub r9, r10, %d    ; switch cond slot\n", n->offset);
+        fprintf(out_asm, "    store_32 [r9], r1\n");
+        /* 第一个 case/default 之前的语句（无条件执行） */
+        Node *pre = n->els;
+        while (pre && pre->kind != ND_CASE && pre->kind != ND_DEFAULT) {
+            gen_stmt(pre);
+            pre = pre->next;
+        }
+        /* 比较链 */
+        for (Node *c = n->rhs; c; c = c->next) {
+            if (c->kind == ND_DEFAULT) {
+                Ldef = (char *)malloc(32);
+                snprintf(Ldef, 32, "Lg%d", c->num);
+                continue;
+            }
+            fprintf(out_asm, "    sub r9, r10, %d    ; switch cond\n", n->offset);
+            fprintf(out_asm, "    load_32 r1, [r9]\n");
+            gen_num_reg(2, c->val, c->tok);
+            fprintf(out_asm, "    cmp r1, r2\n");
+            fprintf(out_asm, "    je Lg%d\n", c->num);
+        }
+        fprintf(out_asm, "    jmp %s\n", Ldef ? Ldef : Lend);
+        brk_lbls[brk_depth++] = Lend;
+        gen_stmts(pre);        /* 体：case 标签 + 语句顺序生成，fallthrough 天然 */
+        brk_depth--;
+        emit_label(Lend);
+        free(Ldef);
+        return;
+    }
+    case ND_CASE:
+    case ND_DEFAULT: {
+        char buf[32];
+        snprintf(buf, sizeof buf, "Lg%d", n->num);
+        emit_label(buf);
+        return;
+    }
+    case ND_BREAK:
+        fprintf(out_asm, "    jmp %s\n", brk_lbls[brk_depth - 1]);
+        return;
+    case ND_CONTINUE:
+        fprintf(out_asm, "    jmp %s\n", cont_lbls[cont_depth - 1]);
+        return;
+    case ND_GOTO:
+        fprintf(out_asm, "    jmp Lg%d\n", n->num);
+        return;
+    case ND_LABEL: {
+        fprintf(out_asm, "Lg%d:\n", n->num);
+        gen_stmts(n->rhs);
         return;
     }
     case ND_VAR:

@@ -154,7 +154,7 @@ Token *tokenize(const char *p) {
             continue;
         }
 
-        /* 数字：十进制或 0x 十六进制 */
+        /* 数字：十进制 / 0x 十六进制 / 0 前缀八进制 */
         if (isdigit((unsigned char)*p)) {
             char *start = (char *)p;
             int64_t val = 0;
@@ -171,6 +171,21 @@ Token *tokenize(const char *p) {
                     else d = *p - 'A' + 10;
                     val = val * 16 + d;
                     p++;
+                }
+            } else if (p[0] == '0' && p[1] >= '0' && p[1] <= '7') {
+                /* 八进制：0 前缀且下一位 0-7 */
+                p++;
+                while (*p >= '0' && *p <= '7') {
+                    val = val * 8 + (*p - '0');
+                    p++;
+                }
+                if (isdigit((unsigned char)*p)) {
+                    /* 后跟 8/9：非法八进制（如 08），容错按十进制重读 */
+                    val = 0;
+                    while (isdigit((unsigned char)*p)) {
+                        val = val * 10 + (*p - '0');
+                        p++;
+                    }
                 }
             } else {
                 while (isdigit((unsigned char)*p)) {
