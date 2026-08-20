@@ -2725,10 +2725,7 @@ Program *parse(Token *toks) {
     *str_tail = NULL;
     prog->strs = str_head;
 
-    /* 必须有 main */
-    for (Func *f = funcs; f; f = f->next)
-        if (f->len == 4 && strncmp(f->name, "main", 4) == 0)
-            return prog;
-    fprintf(stderr, "parse error: no main function\n");
-    exit(1);
+    /* main 检查移交链接器（Task 6 起分离编译：单个对象可无 main；
+     * crt0 的 call main → J16 解析 → 未定义报 "undefined symbol: main"） */
+    return prog;
 }

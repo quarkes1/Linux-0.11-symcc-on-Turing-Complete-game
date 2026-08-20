@@ -57,13 +57,23 @@ static bool is_agg(Type *t) {
     return t->kind == TY_STRUCT || t->kind == TY_UNION;
 }
 
-/* 段感知输出：.text 行进 obj_add_text，.data 行进 obj_add_data */
+/* 段感知输出：.text 行进 obj_add_text，.data 行进 obj_add_data。
+ * 行内容不含换行（链接器按行处理；序列化统一补 \n）——标签行前导
+ * 空行（\n）剥离：空行对布局无意义（line_size 0），只留纯标签行 */
 static void emit(const char *fmt, ...) {
     char buf[1024];
     va_list ap;
     va_start(ap, fmt);
     vsnprintf(buf, sizeof buf, fmt, ap);
     va_end(ap);
+    size_t n = strlen(buf);
+    while (n > 0 && (buf[n - 1] == '\n' || buf[n - 1] == '\r'))
+        buf[--n] = 0;
+    size_t i = 0;
+    while (buf[i] == '\n' || buf[i] == '\r')
+        i++;
+    if (i)
+        memmove(buf, buf + i, n - i + 1);
     if (in_data)
         obj_add_data(cur_obj, buf);
     else
@@ -858,6 +868,7 @@ bool codegen(Program *prog, Obj *obj, bool d32) {
         gen_func(flist[i]);
 
     /* 数据段放在代码之后（label 地址 = 代码后偏移，16 位寻址成立） */
+    in_data = true;
     emit_data(prog);
     return true;
 }

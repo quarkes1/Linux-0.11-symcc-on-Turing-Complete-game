@@ -1,7 +1,8 @@
 /* tests/run_tests.c — symcc 端到端测试运行器
  *
- * 链路（全进程内，无子进程）：symcc_compile_text（C→asm 文本）→
- * asm_assemble（asm→bin）→ emu_run（执行）→ 断言
+ * 链路（全进程内，无子进程）：多文件逐个编译（symcc_compile_obj）→
+ * symld_link（crt0 + 布局 + 重定位）→ asm_assemble（asm→bin）→
+ * emu_run（执行）→ 断言。
  * 屏幕断言：mem[0x2000] 起为帧缓冲（M1 约定，见 emu/emu.h）
  */
 
@@ -12,6 +13,7 @@
 #include "emu/emu.h"
 #include "emu/asm.h"
 #include "symcc/src/symcc.h"
+#include "symcc/src/link.h"
 
 /* 编译（进程内 symcc）→ 汇编（进程内 asm_assemble）→ 模拟（emu_run）→ 断言 */
 /* 大缓冲放 static（.bss）：Windows 默认栈仅 1MB，栈数组会溢出 */
@@ -27,10 +29,10 @@ static void compile_and_run(const char *c_file, int expected_exit,
     FILE *fp;
     size_t tlen;
 
-    /* 多文件：先读额外文件（runtime 等，逗号分隔多个），再读被测文件。
-     * 顺序要求：被调函数先定义（M1 单遍；symcc.exe 多文件同样按
-     * 命令行顺序拼接）。 */
-    tlen = 0;
+    /* 多文件：逐个编译成独立对象（被调函数先定义的文件在前），
+     * 链接器统一布局（Task 6 起：不再拼接文本）。 */
+    Obj *objs[8];
+    int nobj = 0;
     if (extra_file[0]) {
         char list[256];
         strncpy(list, extra_file, sizeof list - 1);
@@ -42,26 +44,33 @@ static void compile_and_run(const char *c_file, int expected_exit,
                 *comma = 0;
             fp = fopen(rest, "rb");
             assert(fp != NULL);
-            tlen += fread(text + tlen, 1, sizeof text - 1 - tlen, fp);
+            tlen = fread(text, 1, sizeof text - 1, fp);
             fclose(fp);
-            text[tlen++] = '\n';          /* 文件间换行分隔 */
+            text[tlen] = 0;
+            assert(nobj < 8);
+            objs[nobj] = obj_new();
+            assert(symcc_compile_obj(text, objs[nobj], false));
+            nobj++;
             rest = comma ? comma + 1 : NULL;
-        }
-        if (tlen >= sizeof text - 2) {
-            fprintf(stderr, "text buffer overflow (%s)\n", extra_file);
-            exit(1);
         }
     }
     fp = fopen(c_file, "rb");
     assert(fp != NULL);
-    tlen += fread(text + tlen, 1, sizeof text - 1 - tlen, fp);
+    tlen = fread(text, 1, sizeof text - 1, fp);
     fclose(fp);
     text[tlen] = 0;
+    assert(nobj < 8);
+    objs[nobj] = obj_new();
+    assert(symcc_compile_obj(text, objs[nobj], false));
+    nobj++;
 
-    /* 编译 → 内存中的汇编文本 */
+    /* 链接 → 绝对 asm 文本 */
     FILE *afp = tmpfile();
     assert(afp != NULL);
-    assert(symcc_compile_text(text, afp));
+    LinkError lerr;
+    assert(symld_link(objs, nobj, "runtime/crt0.asm", afp, NULL, &lerr));
+    for (int i = 0; i < nobj; i++)
+        obj_free(objs[i]);
     rewind(afp);
     tlen = fread(text, 1, sizeof text - 1, afp);
     fclose(afp);

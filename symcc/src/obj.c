@@ -15,11 +15,16 @@ static int is_ident_char(char c) {
            (c >= '0' && c <= '9') || c == '_';
 }
 
-/* 行为 label 定义（`name:` 结尾、无指令缩进）则返回名字长度，否则 0 */
+/* 行为 label 定义（`name:` 结尾、无指令缩进）则返回名字长度，否则 0。
+ * 容忍前导换行（codegen 空行分隔标签；缩进规则不变——空格/制表不算） */
 size_t obj_label_name_len(const char *line) {
     size_t n = strlen(line);
     while (n > 0 && (line[n - 1] == '\n' || line[n - 1] == '\r'))
         n--;
+    while (n > 0 && (line[0] == '\n' || line[0] == '\r')) {
+        line++;
+        n--;
+    }
     if (n < 2 || line[n - 1] != ':')
         return 0;
     if (line[0] == ' ' || line[0] == ';' || line[0] == '"')

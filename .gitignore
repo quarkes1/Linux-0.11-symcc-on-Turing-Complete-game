@@ -2,6 +2,7 @@
 *.exe
 *.asm
 *.bin
+*.sym
 
 # runtime/crt0.asm 是编译器读取的源码（crt0 模板），必须跟踪
 !runtime/crt0.asm
