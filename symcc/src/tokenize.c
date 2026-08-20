@@ -39,11 +39,21 @@ int64_t tok_num(const Token *t) {
 
 static bool is_punct1(char c) {
     return c == '+' || c == '-' || c == '*' || c == '(' || c == ')' ||
-           c == '{' || c == '}' || c == '=' || c == ';' || c == ',';
+           c == '{' || c == '}' || c == '=' || c == ';' || c == ',' ||
+           c == '<' || c == '>' || c == '!';
 }
 
-/* 关键字表（M1 仅 return；识别靠词边界） */
-static const char *keywords[] = { "return" };
+/* 双字符运算符（按最长匹配优先） */
+static bool is_punct2(const char *p) {
+    static const char *ops[] = { "==", "!=", "<=", ">=", "&&", "||" };
+    for (size_t i = 0; i < sizeof ops / sizeof ops[0]; i++)
+        if (p[0] == ops[i][0] && p[1] == ops[i][1])
+            return true;
+    return false;
+}
+
+/* 关键字表（识别靠词边界） */
+static const char *keywords[] = { "return", "int", "if", "else", "while", "for" };
 
 Token *tokenize(const char *p) {
     Token head = {0};
@@ -122,10 +132,48 @@ Token *tokenize(const char *p) {
             continue;
         }
 
-        /* 标点 */
+        /* 标点：双字符优先（== != <= >= && ||），再单字符 */
+        if (is_punct2(p)) {
+            cur = cur->next = new_token(TK_PUNCT, (char *)p, (char *)p + 2);
+            p += 2;
+            continue;
+        }
         if (is_punct1(*p)) {
             cur = cur->next = new_token(TK_PUNCT, (char *)p, (char *)p + 1);
             p++;
+            continue;
+        }
+
+        /* 单字符字面量 'A'（支持 \n \t \\ \' \0 转义） */
+        if (*p == '\'') {
+            char *start = (char *)p;
+            p++;
+            int64_t val;
+            if (*p == '\\') {
+                p++;
+                switch (*p) {
+                case 'n': val = '\n'; break;
+                case 't': val = '\t'; break;
+                case '\\': val = '\\'; break;
+                case '\'': val = '\''; break;
+                case '0': val = '\0'; break;
+                default:
+                    fprintf(stderr, "bad escape: '\\%c'\n", *p);
+                    exit(1);
+                }
+                p++;
+            } else {
+                val = (unsigned char)*p;
+                p++;
+            }
+            if (*p != '\'') {
+                fprintf(stderr, "unterminated character literal: %s\n", start);
+                exit(1);
+            }
+            p++;
+            Token *t = new_token(TK_NUM, start, (char *)p);
+            t->val = val;
+            cur = cur->next = t;
             continue;
         }
 
