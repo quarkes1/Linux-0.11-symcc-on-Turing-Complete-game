@@ -53,7 +53,7 @@ static bool is_punct2(const char *p) {
 }
 
 /* 关键字表（识别靠词边界） */
-static const char *keywords[] = { "return", "int", "if", "else", "while", "for" };
+static const char *keywords[] = { "return", "int", "void", "if", "else", "while", "for" };
 
 Token *tokenize(const char *p) {
     Token head = {0};
@@ -141,6 +141,43 @@ Token *tokenize(const char *p) {
         if (is_punct1(*p)) {
             cur = cur->next = new_token(TK_PUNCT, (char *)p, (char *)p + 1);
             p++;
+            continue;
+        }
+
+        /* 字符串字面量 "..."（支持 \n \t \\ \" \0 转义，展开后存入 t->str） */
+        if (*p == '"') {
+            char *start = (char *)p;
+            size_t cap = strcspn(p + 1, "\"") + 1;   /* 上限：源文本长度 */
+            char *buf = (char *)malloc(cap);
+            int blen = 0;
+            p++;
+            while (*p && *p != '"') {
+                if (*p == '\\') {
+                    p++;
+                    switch (*p) {
+                    case 'n': buf[blen++] = '\n'; break;
+                    case 't': buf[blen++] = '\t'; break;
+                    case '\\': buf[blen++] = '\\'; break;
+                    case '"': buf[blen++] = '"'; break;
+                    case '0': buf[blen++] = '\0'; break;
+                    default:
+                        fprintf(stderr, "bad escape: '\\%c'\n", *p);
+                        exit(1);
+                    }
+                    p++;
+                } else {
+                    buf[blen++] = *p++;
+                }
+            }
+            if (*p != '"') {
+                fprintf(stderr, "unterminated string literal: %s\n", start);
+                exit(1);
+            }
+            p++;
+            Token *t = new_token(TK_STR, start, (char *)p);
+            t->str = buf;
+            t->str_len = blen;
+            cur = cur->next = t;
             continue;
         }
 

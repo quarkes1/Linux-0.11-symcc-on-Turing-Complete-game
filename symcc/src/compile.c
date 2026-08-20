@@ -7,6 +7,6 @@
 /* tokenize → parse → codegen；词法/语法错误直接退出进程 */
 bool symcc_compile_text(const char *src, FILE *out) {
     Token *toks = tokenize(src);
-    Node *prog = parse(toks);
+    Program *prog = parse(toks);
     return codegen(prog, out);
 }

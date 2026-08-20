@@ -1,8 +1,10 @@
 /* symcc/src/parse.c — 递归下降语法分析
  *
- * M1 文法（单函数 main，int 全部有符号）：
- *   program   = funcdef
- *   funcdef   = "int" "main" "(" "void"? ")" "{" stmt* "}"
+ * M1 文法（int 全部有符号）：
+ *   program   = (funcdef | global)*
+ *   funcdef   = ("int" | "void") ident "(" params ")" "{" stmt* "}"
+ *   params    = ε | "void" | ("int" ident ("," "int" ident)*)
+ *   global    = "int" ident ("=" num)? ";"
  *   stmt      = "return" expr ";"
  *             | "{" stmt* "}"
  *             | "int" ident ("=" expr)? ";"
@@ -11,16 +13,14 @@
  *             | "while" "(" expr ")" stmt
  *             | "for" "(" expr? ";" expr? ";" expr? ")" stmt
  *   expr      = assign
- *   assign    = equality ("=" assign)?         （右结合）
- *   equality  = relational (("==" | "!=") relational)*
- *   relational= additive (("<" | "<=" | ">" | ">=") additive)*
- *   additive  = mul ("+" mul | "-" mul)*
- *   mul       = unary ("*" unary)*
- *   unary     = ("-" | "!") unary | primary
- *   primary   = num | "(" expr ")" | ident | 字符字面量
+ *   assign    = logor ("=" assign)?
+ *   primary   = num | "(" expr ")" | ident | 字符字面量 | 字符串字面量
+ *             | ident "(" args ")"          （函数调用）
  *
  * 局部变量：声明时分配栈槽（offset 从 4 起递增），记录在符号链表中。
- * 符号查找为线性扫描（M1 变量少，从简；无作用域回收，块内声明也进同一帧）。
+ * 参数：也是局部变量；被调方入口 sp 指向返回地址，实参 k 在 [sp+4+4k]，
+ * 序言负责拷入各自栈槽（见 codegen.c）。
+ * 限制：被调函数须先定义（M1 单遍，test 均满足）；无作用域回收。
  */
 
 #include <stdio.h>
@@ -31,7 +31,7 @@
 
 static Token *tok;
 
-/* 局部变量符号表（链表） */
+/* 局部变量符号表（链表，每个函数独立） */
 typedef struct Var {
     struct Var *next;
     char *name;
@@ -40,12 +40,15 @@ typedef struct Var {
 } Var;
 
 static Var *vars;
+static int locals_bytes;   /* 当前函数帧大小累计 */
 
-static int locals_bytes;   /* 帧大小累计 */
+/* 全局变量表与函数表（定义顺序） */
+static Global *globals;
+static Func *funcs;
 
-int symcc_frame_size(void) {
-    return locals_bytes;
-}
+/* 字符串字面量编号与收集 */
+static int nstrings;
+static Token *str_head, **str_tail = &str_head;
 
 static void error_at(Token *t, const char *msg) {
     fprintf(stderr, "parse error at \"%.*s\": %s\n", t->len, t->loc, msg);
@@ -76,9 +79,18 @@ static Node *new_binary(int kind, Node *lhs, Node *rhs, Token *t) {
 static Node *expr(void);
 static Node *stmt(void);
 
+/* strndup 替代（mingw 可用但显式自给） */
+static char *xstrndup(const char *s, size_t n) {
+    char *p = (char *)malloc(n + 1);
+    if (!p) { fprintf(stderr, "out of memory\n"); exit(1); }
+    memcpy(p, s, n);
+    p[n] = 0;
+    return p;
+}
+
 /* ---------- 表达式 ---------- */
 
-/* primary = num | "(" expr ")" | ident | 字符字面量（TK_NUM） */
+/* primary = num | "(" expr ")" | ident | 字符/字符串字面量 | ident "(" args ")" */
 static Node *primary(void) {
     if (tok->kind == TK_NUM) {
         Node *n = new_node(ND_NUM, tok);
@@ -92,11 +104,55 @@ static Node *primary(void) {
         skip(")");
         return n;
     }
+    if (tok->kind == TK_STR) {
+        Node *n = new_node(ND_STR, tok);
+        n->val = nstrings++;
+        *str_tail = tok;              /* 收集到程序级链表（数据段输出用） */
+        str_tail = &tok->next;
+        tok = tok->next;
+        return n;
+    }
     if (tok->kind == TK_IDENT) {
+        /* 函数调用：ident "(" */
+        if (tok->next && tok_is(tok->next, "(")) {
+            Token *t = tok;
+            for (Func *f = funcs; f; f = f->next)
+                if (f->len == t->len && strncmp(f->name, t->loc, (size_t)f->len) == 0) {
+                    tok = tok->next;          /* 跳到 ( */
+                    Node *n = new_node(ND_CALL, t);
+                    n->name = xstrndup(t->loc, (size_t)t->len);
+                    n->val = 0;               /* 实参数 */
+                    skip("(");
+                    if (!tok_is(tok, ")")) {
+                        Node head = {0}, *cur = &head;
+                        cur = cur->next = expr();
+                        n->val = 1;
+                        while (tok_is(tok, ",")) {
+                            tok = tok->next;
+                            cur = cur->next = expr();
+                            n->val++;
+                        }
+                        n->rhs = head.next;
+                    }
+                    skip(")");
+                    return n;
+                }
+            error_at(t, "undefined function");
+        }
+        /* 局部变量 */
         for (Var *v = vars; v; v = v->next) {
             if (v->len == tok->len && strncmp(v->name, tok->loc, (size_t)v->len) == 0) {
                 Node *n = new_node(ND_VAR, tok);
                 n->offset = v->offset;
+                tok = tok->next;
+                return n;
+            }
+        }
+        /* 全局变量 */
+        for (Global *g = globals; g; g = g->next) {
+            if (g->len == tok->len && strncmp(g->name, tok->loc, (size_t)g->len) == 0) {
+                Node *n = new_node(ND_GVAR, tok);
+                n->name = xstrndup(tok->loc, (size_t)tok->len);
                 tok = tok->next;
                 return n;
             }
@@ -217,13 +273,13 @@ static Node *logor(void) {
     return n;
 }
 
-/* assign = equality ("=" assign)? */
+/* assign = logor ("=" assign)? */
 static Node *assign(void) {
     Node *n = logor();
     if (tok_is(tok, "=")) {
         Token *t = tok;
         tok = tok->next;
-        if (n->kind != ND_VAR)
+        if (n->kind != ND_VAR && n->kind != ND_GVAR)
             error_at(t, "assignment target is not a variable");
         n = new_binary(ND_ASSIGN, n, assign(), t);
     }
@@ -237,7 +293,7 @@ static Node *expr(void) {
 
 /* ---------- 语句 ---------- */
 
-/* 声明：int ident (= expr)? ;  */
+/* 声明：int ident (= expr)? ; 返回 ND_VAR（无初始化）或 ND_ASSIGN */
 static Node *decl_stmt(void) {
     Token *t = tok;
     tok = tok->next;   /* 吃掉 int */
@@ -358,45 +414,133 @@ static Node *stmt(void) {
     }
 }
 
-/* program = funcdef */
-Node *parse(Token *toks) {
-    tok = toks;
+/* ---------- 函数与全局 ---------- */
 
-    /* int main(void) / int main() */
-    if (!tok_is_kw(tok, "int"))
-        error_at(tok, "expected 'int'");
-    tok = tok->next;
+/* funcdef = ("int" | "void") ident "(" params ")" "{" stmt* "}" */
+static Func *funcdef(bool is_void, Token *t) {
+    Func *f = (Func *)calloc(1, sizeof(Func));
+    if (!f) { fprintf(stderr, "out of memory\n"); exit(1); }
+    f->name = xstrndup(t->loc, (size_t)t->len);
+    f->len = t->len;
+    f->is_void = is_void;
 
-    if (!(tok->kind == TK_IDENT && tok->len == 4 && strncmp(tok->loc, "main", 4) == 0))
-        error_at(tok, "expected 'main'");
-    tok = tok->next;
+    /* 先注册再解析函数体：允许自递归/互递归调用 */
+    f->next = funcs;
+    funcs = f;
+
+    /* 本函数新的局部符号表与帧累计 */
+    vars = NULL;
+    locals_bytes = 0;
+
     skip("(");
-    if (tok_is(tok, "void"))           /* 空参或显式 void */
+    /* 参数：int ident (, int ident)*；空参或 void */
+    if (tok_is_kw(tok, "void")) {
         tok = tok->next;
+    } else {
+        while (!tok_is(tok, ")")) {
+            if (tok->kind == TK_EOF)
+                error_at(tok, "unclosed '('");
+            if (!tok_is_kw(tok, "int"))
+                error_at(tok, "expected 'int' in parameter list");
+            tok = tok->next;
+            if (tok->kind != TK_IDENT)
+                error_at(tok, "expected parameter name");
+            Token *name = tok;
+            tok = tok->next;
+
+            locals_bytes += 4;                 /* 参数 = 局部变量 */
+            Var *v = (Var *)calloc(1, sizeof(Var));
+            if (!v) { fprintf(stderr, "out of memory\n"); exit(1); }
+            v->name = name->loc;
+            v->len = name->len;
+            v->offset = -locals_bytes;
+            v->next = vars;
+            vars = v;
+            f->nargs++;
+
+            if (tok_is(tok, ","))
+                tok = tok->next;
+        }
+    }
     skip(")");
 
-    Node *body = NULL;
-    if (tok_is(tok, "{")) {
-        tok = tok->next;
-        Node head = {0};
-        Node *cur = &head;
-        while (!tok_is(tok, "}")) {
-            if (tok->kind == TK_EOF)
-                error_at(tok, "unclosed '{'");
-            Node *s = stmt();
-            if (s) {
-                cur->next = s;
-                cur = s;
-            }
-        }
-        skip("}");
-        body = head.next;
-    } else {
+    /* 函数体 */
+    if (!tok_is(tok, "{"))
         error_at(tok, "expected '{'");
+    tok = tok->next;
+    Node head = {0};
+    Node *cur = &head;
+    while (!tok_is(tok, "}")) {
+        if (tok->kind == TK_EOF)
+            error_at(tok, "unclosed '{'");
+        Node *s = stmt();
+        if (s) {
+            cur->next = s;
+            cur = s;
+        }
+    }
+    skip("}");
+    f->body = head.next;
+    f->frame_size = locals_bytes;
+    return f;
+}
+
+/* program = (funcdef | global)* */
+Program *parse(Token *toks) {
+    tok = toks;
+    globals = NULL;
+    funcs = NULL;
+    nstrings = 0;
+    str_head = NULL;
+    str_tail = &str_head;
+
+    Program *prog = (Program *)calloc(1, sizeof(Program));
+    if (!prog) { fprintf(stderr, "out of memory\n"); exit(1); }
+
+    while (tok->kind != TK_EOF) {
+        if (!tok_is_kw(tok, "int") && !tok_is_kw(tok, "void"))
+            error_at(tok, "expected 'int' or 'void' at top level");
+        bool is_void = tok_is_kw(tok, "void");
+        tok = tok->next;
+
+        if (tok->kind != TK_IDENT)
+            error_at(tok, "expected name");
+        Token *name = tok;
+        tok = tok->next;
+
+        if (tok_is(tok, "(")) {
+            /* 函数定义（funcdef 内部自行注册到 funcs，允许自递归） */
+            funcdef(is_void, name);
+        } else {
+            /* 全局变量声明：int ident (= num)? ; */
+            if (is_void)
+                error_at(tok, "'void' cannot declare a variable");
+            Global *g = (Global *)calloc(1, sizeof(Global));
+            if (!g) { fprintf(stderr, "out of memory\n"); exit(1); }
+            g->name = xstrndup(name->loc, (size_t)name->len);
+            g->len = name->len;
+            g->init_val = 0;
+            if (tok_is(tok, "=")) {
+                tok = tok->next;
+                if (tok->kind != TK_NUM)
+                    error_at(tok, "global initializer must be a constant");
+                g->init_val = tok->val;
+                tok = tok->next;
+            }
+            skip(";");
+            g->next = globals;
+            globals = g;
+        }
     }
 
-    if (tok->kind != TK_EOF)
-        error_at(tok, "unexpected token after function");
+    prog->globals = globals;
+    prog->funcs = funcs;
+    prog->strs = str_head;
 
-    return body;
+    /* 必须有 main */
+    for (Func *f = funcs; f; f = f->next)
+        if (f->len == 4 && strncmp(f->name, "main", 4) == 0)
+            return prog;
+    fprintf(stderr, "parse error: no main function\n");
+    exit(1);
 }

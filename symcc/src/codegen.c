@@ -3,21 +3,27 @@
  * 约定：
  * - 表达式求值结果在 r1；r2 作二元运算第二操作数；r9 作地址暂存
  * - 二元运算：右操作数 → push 暂存 → 左操作数 → pop r2 → 运算（r1 op r2）
- *   （减法顺序自然满足 left - right：sub r1, r1, r2）
- * - 乘用 mul（无符号低 32 位与有符号一致）；int 全部按有符号（jl/jle/jg/jge）
- * - 比较/逻辑结果 materialize 为 0/1（label 跳转）；&&/|| 短路求值
- * - 局部变量：负偏移栈槽，无 base+offset 寻址 → sub r9, sp, |off| 合成地址
+ * - 乘用 mul；int 全部按有符号比较（jl/jle/jg/jge）
+ * - 局部变量：负偏移栈槽，相对帧基址 r10（函数入口 sp 处保存）
+ * - 函数调用（全栈传参）：实参从右往左 push → call label → 调用方
+ *   add sp,sp,4*nargs 清理。被调方序言 push r10（保存调用方帧指针）、
+ *   mov r10,sp、sub sp,sp,frame；实参 k 在 [r10+8+4k]（push 后入口），
+ *   拷入栈槽 [r10-4*(k+1)]；尾言 mov sp,r10; pop r10; ret
+ * - 全局变量/字符串在数据段（label = 名字；16 位寻址，M1 程序 < 64KB）
  * - 立即数上限 0xFFFF（ISA 硬限制）：超出直接报错，编译中止
- * - M1 无 crt0：main 直启，返回用 jmp halt（Task 9 正式 crt0 换 ret）
+ * - M1 无 crt0：main 直启（mov sp,0x4000），main 返回用 jmp halt
+ *   （Task 9 正式 crt0 换 ret 链路）
  */
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include "symcc.h"
 
 static FILE *out_asm;
 static int label_cnt;
+static bool in_main;   /* 当前生成函数是否是 main（return 处理不同） */
 
 static void err_imm(Token *t, int64_t val) {
     fprintf(stderr, "constant too large for 16-bit immediate: %lld (%.*s)\n",
@@ -108,11 +114,36 @@ static void gen_expr(Node *n) {
         gen_addr(n);
         fprintf(out_asm, "    load_32 r1, [r9]    ; var\n");
         return;
+    case ND_GVAR:
+        fprintf(out_asm, "    load_32 r1, [%s]    ; global\n", n->name);
+        return;
+    case ND_STR:
+        fprintf(out_asm, "    mov r1, s%lld       ; string\n", (long long)n->val);
+        return;
     case ND_ASSIGN:
         gen_expr(n->rhs);
-        gen_addr(n->lhs);
-        fprintf(out_asm, "    store_32 [r9], r1   ; =\n");
+        if (n->lhs->kind == ND_GVAR)
+            fprintf(out_asm, "    store_32 [%s], r1   ; = global\n", n->lhs->name);
+        else {
+            gen_addr(n->lhs);
+            fprintf(out_asm, "    store_32 [r9], r1   ; =\n");
+        }
         return;
+    case ND_CALL: {
+        /* 实参从右往左求值并 push（全栈传参）→ call → 清理 */
+        Node *args[64];
+        int na = 0;
+        for (Node *a = n->rhs; a; a = a->next)
+            args[na++] = a;
+        for (int k = na - 1; k >= 0; k--) {
+            gen_expr(args[k]);
+            fprintf(out_asm, "    push r1            ; arg %d\n", k);
+        }
+        fprintf(out_asm, "    call %s\n", n->name);
+        if (na > 0)
+            fprintf(out_asm, "    add sp, sp, %d      ; 清理实参\n", 4 * na);
+        return;
+    }
     case ND_NEG:
         gen_expr(n->lhs);
         fprintf(out_asm, "    neg r1, r1         ; unary -\n");
@@ -183,8 +214,14 @@ static void gen_stmt(Node *n) {
     case ND_RETURN:
         gen_expr(n->lhs);
         fprintf(out_asm, "    ; return\n");
-        fprintf(out_asm, "    mov sp, r10        ; 恢复帧\n");
-        fprintf(out_asm, "    jmp halt           ; M1 占位：无 crt0\n");
+        if (in_main) {
+            fprintf(out_asm, "    mov sp, r10        ; 恢复帧\n");
+            fprintf(out_asm, "    jmp halt           ; M1 占位：无 crt0\n");
+        } else {
+            fprintf(out_asm, "    mov sp, r10\n");
+            fprintf(out_asm, "    pop r10            ; 恢复调用方帧指针\n");
+            fprintf(out_asm, "    ret\n");
+        }
         return;
     case ND_IF: {
         const char *Lelse = new_label();
@@ -235,20 +272,91 @@ static void gen_stmt(Node *n) {
     }
 }
 
-bool codegen(Node *prog, FILE *out) {
+/* 函数尾言（体末尾无 return 时的兜底） */
+static void gen_epilogue(void) {
+    if (in_main) {
+        fprintf(out_asm, "    jmp halt           ; main 无 return 兜底\n");
+    } else {
+        fprintf(out_asm, "    mov sp, r10\n");
+        fprintf(out_asm, "    pop r10            ; 恢复调用方帧指针\n");
+        fprintf(out_asm, "    ret\n");
+    }
+}
+
+/* 函数序言 + 体 + 尾言 */
+static void gen_func(Func *f) {
+    in_main = (f->len == 4 && strncmp(f->name, "main", 4) == 0);
+
+    fprintf(out_asm, "\n%s:\n", f->name);
+    if (in_main) {
+        fprintf(out_asm, "    mov sp, 0x4000       ; crt0 占位：初始化栈顶（Task 9 正式 crt0）\n");
+    } else {
+        fprintf(out_asm, "    push r10             ; 保存调用方帧指针\n");
+    }
+    fprintf(out_asm, "    mov r10, sp          ; 帧基址\n");
+    if (f->frame_size)
+        fprintf(out_asm, "    sub sp, sp, %d        ; 帧：局部变量 %d 字节\n",
+                f->frame_size, f->frame_size);
+
+    /* 参数拷入栈槽：实参 k 在 [r10+8+4k]（序言 push r10 后入口 sp = r10，
+     * 实参原本在入口 sp+4+4k）；栈槽 = r10-4*(k+1)（参数先于局部分配） */
+    for (int k = 0; k < f->nargs; k++) {
+        fprintf(out_asm, "    add r9, r10, %d        ; arg %d addr\n", 8 + 4 * k, k);
+        fprintf(out_asm, "    load_32 r1, [r9]\n");
+        fprintf(out_asm, "    sub r9, r10, %d        ; arg %d slot\n", 4 * (k + 1), k);
+        fprintf(out_asm, "    store_32 [r9], r1\n");
+    }
+
+    gen_stmts(f->body);
+    gen_epilogue();
+}
+
+/* 数据段：全局变量（label = 名字）+ 字符串（label = s%d） */
+static void emit_data(Program *prog) {
+    for (Global *g = prog->globals; g; g = g->next) {
+        fprintf(out_asm, "\n%s:\n", g->name);
+        fprintf(out_asm, "    U32 %lld\n", (long long)g->init_val);
+    }
+    int idx = 0;
+    for (Token *t = prog->strs; t; t = t->next) {
+        fprintf(out_asm, "\ns%d:\n", idx++);
+        /* 含 NUL 或引号的字符串不能用 "..." 原样发射（汇编器按引号/字节扫），
+         * 退回逐字节 U8；其余用 "..." + 结尾 U8 0 */
+        if (memchr(t->str, 0, (size_t)t->str_len) ||
+            memchr(t->str, '"', (size_t)t->str_len)) {
+            for (int i = 0; i < t->str_len; i++)
+                fprintf(out_asm, "    U8 %d\n", (unsigned char)t->str[i]);
+        } else {
+            fprintf(out_asm, "    \"%.*s\"\n", t->str_len, t->str);
+        }
+        fprintf(out_asm, "    U8 0\n");
+    }
+}
+
+bool codegen(Program *prog, FILE *out) {
     out_asm = out;
     label_cnt = 0;
+
     fprintf(out, "; symcc 输出 — SymphonyPlus 汇编\n");
-    fprintf(out, "main:\n");
-    fprintf(out, "    mov sp, 0x4000       ; crt0 占位：初始化栈顶（Task 9 正式 crt0）\n");
-    fprintf(out, "    mov r10, sp          ; 帧基址（push/pop 不改，变量偏移基准）\n");
-    fprintf(out, "    sub sp, sp, %d        ; 帧：局部变量 %d 字节\n",
-            symcc_frame_size(), symcc_frame_size());
 
-    for (Node *n = prog; n; n = n->next)
-        gen_stmt(n);
+    /* 函数顺序：main 必须最先（模拟器从地址 0 执行；数据段不得挡在入口），
+     * 其余按定义顺序（链表是逆序，恢复正序） */
+    static Func *flist[256];
+    int n = 0;
+    for (Func *f = prog->funcs; f; f = f->next)
+        if (f->len == 4 && strncmp(f->name, "main", 4) == 0)
+            flist[n++] = f;
+    for (Func *f = prog->funcs; f; f = f->next)
+        if (!(f->len == 4 && strncmp(f->name, "main", 4) == 0))
+            flist[n++] = f;
+    if (n > 256) { fprintf(stderr, "codegen: too many functions\n"); exit(1); }
+    for (int i = 0; i < n; i++)
+        gen_func(flist[i]);
 
-    fprintf(out, "halt:\n");
-    fprintf(out, "    jmp halt\n");
+    /* 数据段放在代码之后（label 地址 = 代码后偏移，16 位寻址成立） */
+    emit_data(prog);
+
+    fprintf(out_asm, "\nhalt:\n");
+    fprintf(out_asm, "    jmp halt\n");
     return true;
 }

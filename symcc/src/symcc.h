@@ -17,17 +17,20 @@
 enum {
     TK_EOF = 0,
     TK_NUM,      /* 数字字面量（val 字段） */
-    TK_IDENT,    /* 标识符（M1 未用） */
-    TK_KEYWORD,  /* 关键字（return） */
+    TK_IDENT,    /* 标识符 */
+    TK_KEYWORD,  /* 关键字（return 等） */
     TK_PUNCT,    /* 标点 + - * ( ) { } = ; , */
+    TK_STR,      /* 字符串字面量（str/str_len 字段，转义已展开） */
 };
 
 typedef struct Token {
     struct Token *next;
     int kind;
-    int64_t val;   /* TK_NUM 的值 */
-    char *loc;     /* 源码位置（不含空白的首个字符） */
-    int len;       /* 长度 */
+    int64_t val;     /* TK_NUM 的值 */
+    char *loc;       /* 源码位置（不含空白的首个字符） */
+    int len;         /* 长度 */
+    char *str;       /* TK_STR：展开后的字节（malloc，无 NUL 结尾） */
+    int str_len;     /* TK_STR 字节数 */
 } Token;
 
 Token *tokenize(const char *p);
@@ -60,6 +63,9 @@ enum {
     ND_IF,       /* lhs = 条件，rhs = then，els = else（可空） */
     ND_WHILE,    /* lhs = 条件，rhs = 循环体 */
     ND_FOR,      /* lhs = init（可空），rhs = 条件（可空），els = inc（可空），body = 循环体 */
+    ND_GVAR,     /* 全局变量：name = 全局名（label 即名字） */
+    ND_CALL,     /* 函数调用：name = 函数名，rhs = 实参链表，val = 实参数 */
+    ND_STR,      /* 字符串字面量：val = 字符串编号（数据段 label s%d） */
 };
 
 typedef struct Node {
@@ -70,20 +76,44 @@ typedef struct Node {
     struct Node *els;    /* if-else / for-inc */
     struct Node *body;   /* for 循环体 */
     Token *tok;    /* 生成诊断与代码注释用 */
-    int64_t val;   /* ND_NUM */
+    int64_t val;   /* ND_NUM / ND_CALL 实参数 / ND_STR 编号 */
     int offset;    /* ND_VAR：相对 sp 的负偏移 */
+    char *name;    /* ND_GVAR / ND_CALL：标识符名（malloc） */
 } Node;
 
-/* 函数体 = 语句列表。M1 只允许一个 main 函数。 */
-Node *parse(Token *tok);
+/* 函数定义 */
+typedef struct Func {
+    struct Func *next;
+    char *name;
+    int len;
+    bool is_void;    /* void 返回类型 */
+    int nargs;       /* 参数个数 */
+    int frame_size;  /* 帧大小（局部变量 + 参数栈槽） */
+    Node *body;      /* 语句链表 */
+} Func;
 
-/* 当前函数的栈帧大小（局部变量总字节数；M1 单函数，解析完成后可查） */
-int symcc_frame_size(void);
+/* 全局变量声明 */
+typedef struct Global {
+    struct Global *next;
+    char *name;
+    int len;
+    int64_t init_val;   /* 初值（M1 常量） */
+} Global;
+
+/* 程序 = 全局变量 + 函数 + 字符串 */
+typedef struct Program {
+    Func *funcs;
+    Global *globals;
+    Token *strs;    /* 字符串字面量链表（顺序 = 编号） */
+} Program;
+
+/* 语法分析：多函数 + 全局变量。返回程序结构。 */
+Program *parse(Token *tok);
 
 /* ---------- 代码生成 ---------- */
 
 /* 输出 SymphonyPlus 汇编文本到 out；imm 超出 16 位报错并返回 false */
-bool codegen(Node *prog, FILE *out);
+bool codegen(Program *prog, FILE *out);
 
 /* ---------- 编译入口（main.c 与测试运行器共用） ---------- */
 
