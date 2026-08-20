@@ -113,57 +113,57 @@ static void scrup(void)
 			pos += video_size_row;
 			scr_end += video_size_row;
 			if (scr_end > video_mem_end) {
-				__asm__("cld\n\t"
-					"rep\n\t"
-					"movsl\n\t"
-					"movl _video_num_columns,%1\n\t"
-					"rep\n\t"
-					"stosw"
-					::"a" (video_erase_char),
-					"c" ((video_num_lines-1)*video_num_columns>>1),
-					"D" (video_mem_start),
-					"S" (origin)
-					:"cx","di","si");
+/* SYMPLUS-PORT: rep movsl+stosw scroll -> C loop */
+				{
+					unsigned short *_d = (unsigned short *)video_mem_start;
+					unsigned short *_s = (unsigned short *)origin;
+					unsigned short *_e = (unsigned short *)(scr_end - video_size_row);
+					int _i;
+					for (_i = 0; _i < (video_num_lines-1)*video_num_columns; _i++)
+						_d[_i] = _s[_i];
+					for (_i = 0; _i < video_num_columns; _i++)
+						_e[_i] = video_erase_char;
+				}
 				scr_end -= origin-video_mem_start;
 				pos -= origin-video_mem_start;
 				origin = video_mem_start;
 			} else {
-				__asm__("cld\n\t"
-					"rep\n\t"
-					"stosw"
-					::"a" (video_erase_char),
-					"c" (video_num_columns),
-					"D" (scr_end-video_size_row)
-					:"cx","di");
+/* SYMPLUS-PORT: rep stosw erase -> C loop */
+				{
+					unsigned short *_e = (unsigned short *)(scr_end - video_size_row);
+					int _i;
+					for (_i = 0; _i < video_num_columns; _i++)
+						_e[_i] = video_erase_char;
+				}
 			}
 			set_origin();
 		} else {
-			__asm__("cld\n\t"
-				"rep\n\t"
-				"movsl\n\t"
-				"movl _video_num_columns,%%ecx\n\t"
-				"rep\n\t"
-				"stosw"
-				::"a" (video_erase_char),
-				"c" ((bottom-top-1)*video_num_columns>>1),
-				"D" (origin+video_size_row*top),
-				"S" (origin+video_size_row*(top+1))
-				:"cx","di","si");
+/* SYMPLUS-PORT: rep movsl+stosw scroll -> C loop */
+		{
+			unsigned short *_d = (unsigned short *)(origin + video_size_row*top);
+			unsigned short *_s = (unsigned short *)(origin + video_size_row*(top+1));
+			unsigned short *_e = (unsigned short *)(origin + video_size_row*(bottom-1));
+			int _i;
+			for (_i = 0; _i < (bottom-top-1)*video_num_columns; _i++)
+				_d[_i] = _s[_i];
+			for (_i = 0; _i < video_num_columns; _i++)
+				_e[_i] = video_erase_char;
+		}
 		}
 	}
 	else		/* Not EGA/VGA */
 	{
-		__asm__("cld\n\t"
-			"rep\n\t"
-			"movsl\n\t"
-			"movl _video_num_columns,%%ecx\n\t"
-			"rep\n\t"
-			"stosw"
-			::"a" (video_erase_char),
-			"c" ((bottom-top-1)*video_num_columns>>1),
-			"D" (origin+video_size_row*top),
-			"S" (origin+video_size_row*(top+1))
-			:"cx","di","si");
+/* SYMPLUS-PORT: rep movsl+stosw scroll -> C loop */
+		{
+			unsigned short *_d = (unsigned short *)(origin + video_size_row*top);
+			unsigned short *_s = (unsigned short *)(origin + video_size_row*(top+1));
+			unsigned short *_e = (unsigned short *)(origin + video_size_row*(bottom-1));
+			int _i;
+			for (_i = 0; _i < (bottom-top-1)*video_num_columns; _i++)
+				_d[_i] = _s[_i];
+			for (_i = 0; _i < video_num_columns; _i++)
+				_e[_i] = video_erase_char;
+		}
 	}
 }
 
@@ -171,33 +171,31 @@ static void scrdown(void)
 {
 	if (video_type == VIDEO_TYPE_EGAC || video_type == VIDEO_TYPE_EGAM)
 	{
-		__asm__("std\n\t"
-			"rep\n\t"
-			"movsl\n\t"
-			"addl $2,%%edi\n\t"	/* %edi has been decremented by 4 */
-			"movl _video_num_columns,%%ecx\n\t"
-			"rep\n\t"
-			"stosw"
-			::"a" (video_erase_char),
-			"c" ((bottom-top-1)*video_num_columns>>1),
-			"D" (origin+video_size_row*bottom-4),
-			"S" (origin+video_size_row*(bottom-1)-4)
-			:"ax","cx","di","si");
+/* SYMPLUS-PORT: std rep movsl+stosw scroll-down -> C reverse loop */
+		{
+			unsigned short *_d = (unsigned short *)(origin + video_size_row*(top+1));
+			unsigned short *_s = (unsigned short *)(origin + video_size_row*top);
+			unsigned short *_e = (unsigned short *)origin;
+			int _i;
+			for (_i = (bottom-top-1)*video_num_columns - 1; _i >= 0; _i--)
+				_d[_i] = _s[_i];
+			for (_i = 0; _i < video_num_columns; _i++)
+				_e[_i] = video_erase_char;
+		}
 	}
 	else		/* Not EGA/VGA */
 	{
-		__asm__("std\n\t"
-			"rep\n\t"
-			"movsl\n\t"
-			"addl $2,%%edi\n\t"	/* %edi has been decremented by 4 */
-			"movl _video_num_columns,%%ecx\n\t"
-			"rep\n\t"
-			"stosw"
-			::"a" (video_erase_char),
-			"c" ((bottom-top-1)*video_num_columns>>1),
-			"D" (origin+video_size_row*bottom-4),
-			"S" (origin+video_size_row*(bottom-1)-4)
-			:"ax","cx","di","si");
+/* SYMPLUS-PORT: std rep movsl+stosw scroll-down -> C reverse loop */
+		{
+			unsigned short *_d = (unsigned short *)(origin + video_size_row*(top+1));
+			unsigned short *_s = (unsigned short *)(origin + video_size_row*top);
+			unsigned short *_e = (unsigned short *)origin;
+			int _i;
+			for (_i = (bottom-top-1)*video_num_columns - 1; _i >= 0; _i--)
+				_d[_i] = _s[_i];
+			for (_i = 0; _i < video_num_columns; _i++)
+				_e[_i] = video_erase_char;
+		}
 	}
 }
 
@@ -238,8 +236,8 @@ static void del(void)
 
 static void csi_J(int par)
 {
-	long count __asm__("cx");
-	long start __asm__("di");
+	long count;
+	long start;
 
 	switch (par) {
 		case 0:	/* erase from cursor to end of display */
@@ -257,18 +255,19 @@ static void csi_J(int par)
 		default:
 			return;
 	}
-	__asm__("cld\n\t"
-		"rep\n\t"
-		"stosw\n\t"
-		::"c" (count),
-		"D" (start),"a" (video_erase_char)
-		:"cx","di");
+/* SYMPLUS-PORT: rep stosw erase -> C loop */
+	{
+		unsigned short *_p = (unsigned short *)start;
+		long _i;
+		for (_i = 0; _i < count; _i++)
+			_p[_i] = video_erase_char;
+	}
 }
 
 static void csi_K(int par)
 {
-	long count __asm__("cx");
-	long start __asm__("di");
+	long count;
+	long start;
 
 	switch (par) {
 		case 0:	/* erase from cursor to end of line */
@@ -288,12 +287,13 @@ static void csi_K(int par)
 		default:
 			return;
 	}
-	__asm__("cld\n\t"
-		"rep\n\t"
-		"stosw\n\t"
-		::"c" (count),
-		"D" (start),"a" (video_erase_char)
-		:"cx","di");
+/* SYMPLUS-PORT: rep stosw erase -> C loop */
+	{
+		unsigned short *_p = (unsigned short *)start;
+		long _i;
+		for (_i = 0; _i < count; _i++)
+			_p[_i] = video_erase_char;
+	}
 }
 
 void csi_m(void)
@@ -458,10 +458,8 @@ void con_write(struct tty_struct * tty)
 						pos -= video_size_row;
 						lf();
 					}
-					__asm__("movb _attr,%%ah\n\t"
-						"movw %%ax,%1\n\t"
-						::"a" (c),"m" (*(short *)pos)
-						:"ax");
+/* SYMPLUS-PORT: attr+char store -> direct write */
+					*(unsigned short *)pos = (unsigned short)(((unsigned short)attr << 8) | (c & 0xff));
 					pos += 2;
 					x++;
 				} else if (c==27)
@@ -708,3 +706,14 @@ static void sysbeep(void)
 	/* 1/8 second */
 	beepcount = HZ/8;	
 }
+
+
+
+
+
+
+
+
+
+
+

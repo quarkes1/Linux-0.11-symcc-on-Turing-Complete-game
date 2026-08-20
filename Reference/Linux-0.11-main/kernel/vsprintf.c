@@ -32,10 +32,8 @@ static int skip_atoi(const char **s)
 #define SPECIAL	32		/* 0x */
 #define SMALL	64		/* use 'abcdef' instead of 'ABCDEF' */
 
-#define do_div(n,base) ({ \
-int __res; \
-__asm__("divl %4":"=a" (n),"=d" (__res):"0" (n),"1" (0),"r" (base)); \
-__res; })
+/* SYMPLUS-PORT: statement-expr -> comma expr; n is modified in place */
+#define do_div(n,base) (((n) % (base)) + 0 * ((n) /= (base)))
 
 static char * number(char * str, int num, int base, int size, int precision
 	,int type)
@@ -231,3 +229,5 @@ int vsprintf(char *buf, const char *fmt, va_list args)
 	*str = '\0';
 	return str-buf;
 }
+
+

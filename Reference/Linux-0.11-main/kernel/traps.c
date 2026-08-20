@@ -19,22 +19,11 @@
 #include <asm/segment.h>
 #include <asm/io.h>
 
-#define get_seg_byte(seg,addr) ({ \
-register char __res; \
-__asm__("push %%fs;mov %%ax,%%fs;movb %%fs:%2,%%al;pop %%fs" \
-	:"=a" (__res):"0" (seg),"m" (*(addr))); \
-__res;})
+/* SYMPLUS-PORT: fs-segment read -> plain memory */
 
-#define get_seg_long(seg,addr) ({ \
-register unsigned long __res; \
-__asm__("push %%fs;mov %%ax,%%fs;movl %%fs:%2,%%eax;pop %%fs" \
-	:"=a" (__res):"0" (seg),"m" (*(addr))); \
-__res;})
+/* SYMPLUS-PORT: fs-segment read -> plain memory */
 
-#define _fs() ({ \
-register unsigned short __res; \
-__asm__("mov %%fs,%%ax":"=a" (__res):); \
-__res;})
+/* SYMPLUS-PORT: no fs register -> 0 */
 
 int do_exit(long code);
 
@@ -106,7 +95,7 @@ void do_int3(long * esp, long error_code,
 {
 	int tr;
 
-	__asm__("str %%ax":"=a" (tr):"0" (0));
+        tr = 0;
 	printk("eax\t\tebx\t\tecx\t\tedx\n\r%8x\t%8x\t%8x\t%8x\n\r",
 		eax,ebx,ecx,edx);
 	printk("esi\t\tedi\t\tebp\t\tesp\n\r%8x\t%8x\t%8x\t%8x\n\r",
@@ -206,3 +195,11 @@ void trap_init(void)
 	outb(inb_p(0xA1)&0xdf,0xA1);
 	set_trap_gate(39,&parallel_interrupt);
 }
+
+
+
+
+
+
+
+

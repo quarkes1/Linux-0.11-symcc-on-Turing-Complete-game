@@ -25,10 +25,8 @@
 #define MAJOR_NR 3
 #include "blk.h"
 
-#define CMOS_READ(addr) ({ \
-outb_p(0x80|addr,0x70); \
-inb_p(0x71); \
-})
+/* SYMPLUS-PORT: statement-expr -> comma expr (inb is stub in M2) */
+#define CMOS_READ(addr) ((outb_p(0x80|addr,0x70), inb_p(0x71)))
 
 /* Max read/write errors/sector */
 #define MAX_ERRORS	7
@@ -58,11 +56,11 @@ static struct hd_struct {
 	long nr_sects;
 } hd[5*MAX_HD]={{0,0},};
 
-#define port_read(port,buf,nr) \
-__asm__("cld;rep;insw"::"d" (port),"D" (buf),"c" (nr):"cx","di")
+/* SYMPLUS-PORT: insw -> stub (no hw in M2) */
+#define port_read(port,buf,nr) ((void)(port), (void)(buf), (void)(nr))
 
-#define port_write(port,buf,nr) \
-__asm__("cld;rep;outsw"::"d" (port),"S" (buf),"c" (nr):"cx","si")
+/* SYMPLUS-PORT: outsw -> stub (no hw in M2) */
+#define port_write(port,buf,nr) ((void)(port), (void)(buf), (void)(nr))
 
 extern void hd_interrupt(void);
 extern void rd_load(void);
@@ -181,7 +179,7 @@ static void hd_out(unsigned int drive,unsigned int nsect,unsigned int sect,
 		unsigned int head,unsigned int cyl,unsigned int cmd,
 		void (*intr_addr)(void))
 {
-	register int port asm("dx");
+	register int port;
 
 	if (drive>1 || head>15)
 		panic("Trying to write bad sector");
@@ -307,9 +305,9 @@ void do_hd_request(void)
 	}
 	block += hd[dev].start_sect;
 	dev /= 5;
-	__asm__("divl %4":"=a" (block),"=d" (sec):"0" (block),"1" (0),
+	sec = block % hd_info[dev].sect; /* SYMPLUS-PORT: divl -> C div */
 		"r" (hd_info[dev].sect));
-	__asm__("divl %4":"=a" (cyl),"=d" (head):"0" (block),"1" (0),
+	cyl = block / hd_info[dev].head; head = block % hd_info[dev].head; /* SYMPLUS-PORT: divl -> C div */
 		"r" (hd_info[dev].head));
 	sec++;
 	nsect = CURRENT->nr_sectors;
@@ -347,3 +345,9 @@ void hd_init(void)
 	outb_p(inb_p(0x21)&0xfb,0x21);
 	outb(inb_p(0xA1)&0xbf,0xA1);
 }
+
+
+
+
+
+

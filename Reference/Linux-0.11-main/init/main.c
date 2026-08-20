@@ -66,10 +66,8 @@ extern long startup_time;
  * bios-listing reading. Urghh.
  */
 
-#define CMOS_READ(addr) ({ \
-outb_p(0x80|addr,0x70); \
-inb_p(0x71); \
-})
+/* SYMPLUS-PORT: statement-expr -> comma expr (inb is stub in M2) */
+#define CMOS_READ(addr) ((outb_p(0x80|addr,0x70), inb_p(0x71)))
 
 #define BCD_TO_BIN(val) ((val)=((val)&15) + ((val)>>4)*10)
 
@@ -207,3 +205,4 @@ void init(void)
 	}
 	_exit(0);	/* NOTE! _exit, not exit() */
 }
+

@@ -47,8 +47,8 @@ static int seek = 0;
 
 extern unsigned char current_DOR;
 
-#define immoutb_p(val,port) \
-__asm__("outb %0,%1\n\tjmp 1f\n1:\tjmp 1f\n1:"::"a" ((char) (val)),"i" (port))
+/* SYMPLUS-PORT: outb+delay -> stub (no hw in M2) */
+#define immoutb_p(val,port) ((void)(val), (void)(port))
 
 #define TYPE(x) ((x)>>2)
 #define DRIVE(x) ((x)&0x03)
@@ -152,10 +152,11 @@ repeat:
 	return 0;
 }
 
+/* SYMPLUS-PORT: rep movsl -> C dword loop */
 #define copy_buffer(from,to) \
-__asm__("cld ; rep ; movsl" \
-	::"c" (BLOCK_SIZE/4),"S" ((long)(from)),"D" ((long)(to)) \
-	:"cx","di","si")
+{ int _i; unsigned int *_f = (unsigned int *)(long)(from); \
+  unsigned int *_t = (unsigned int *)(long)(to); \
+  for (_i = 0; _i < BLOCK_SIZE/4; _i++) _t[_i] = _f[_i]; }
 
 static void setup_DMA(void)
 {
@@ -171,9 +172,7 @@ static void setup_DMA(void)
 	immoutb_p(4|2,10);
 /* output command byte. I don't know why, but everyone (minix, */
 /* sanches & canton) output this twice, first to 12 then to 11 */
- 	__asm__("outb %%al,$12\n\tjmp 1f\n1:\tjmp 1f\n1:\t"
-	"outb %%al,$11\n\tjmp 1f\n1:\tjmp 1f\n1:"::
-	"a" ((char) ((command == FD_READ)?DMA_READ:DMA_WRITE)));
+/* SYMPLUS-PORT: DMA command outb -> stub */
 /* 8 low bits of addr */
 	immoutb_p(addr,4);
 	addr >>= 8;
@@ -396,7 +395,7 @@ static void reset_floppy(void)
 	do_floppy = reset_interrupt;
 	outb_p(current_DOR & ~0x04,FD_DOR);
 	for (i=0 ; i<100 ; i++)
-		__asm__("nop");
+		/* SYMPLUS-PORT: nop delay -> stub */
 	outb(current_DOR,FD_DOR);
 	sti();
 }
@@ -460,3 +459,7 @@ void floppy_init(void)
 	set_trap_gate(0x26,&floppy_interrupt);
 	outb(inb_p(0x21)&~0x40,0x21);
 }
+
+
+
+

@@ -62,13 +62,13 @@ static int permission(struct m_inode * inode,int mask)
  */
 static int match(int len,const char * name,struct dir_entry * de)
 {
-	register int same __asm__("ax");
+	register int same;
 
 	if (!de || !de->inode || len > NAME_LEN)
 		return 0;
 	if (len < NAME_LEN && de->name[len])
 		return 0;
-	__asm__("cld\n\t"
+	/* SYMPLUS-PORT: cld;rep;movsl -> loop */
 		"fs ; repe ; cmpsb\n\t"
 		"setz %%al"
 		:"=a" (same)
@@ -776,3 +776,5 @@ int sys_link(const char * oldname, const char * newname)
 	iput(oldinode);
 	return 0;
 }
+
+

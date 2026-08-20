@@ -60,8 +60,8 @@ void buffer_init(long buffer_end);
 #define PIPE_SIZE(inode) ((PIPE_HEAD(inode)-PIPE_TAIL(inode))&(PAGE_SIZE-1))
 #define PIPE_EMPTY(inode) (PIPE_HEAD(inode)==PIPE_TAIL(inode))
 #define PIPE_FULL(inode) (PIPE_SIZE(inode)==(PAGE_SIZE-1))
-#define INC_PIPE(head) \
-__asm__("incl %0\n\tandl $4095,%0"::"m" (head))
+/* SYMPLUS-PORT: inline asm -> pure C */
+#define INC_PIPE(head) ((head) = ((head) + 1) & 4095)
 
 typedef char buffer_block[BLOCK_SIZE];
 
@@ -200,3 +200,4 @@ extern int ROOT_DEV;
 extern void mount_root(void);
 
 #endif
+

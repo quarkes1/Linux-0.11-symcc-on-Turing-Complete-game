@@ -1,14 +1,8 @@
-/*
- *  NOTE!!! memcpy(dest,src,n) assumes ds=es=normal data segment. This
- *  goes for all kernel functions (ds=es=kernel space, fs=local data,
- *  gs=null), as well as for all well-behaving user programs (ds=es=
- *  user data space). This is NOT a bug, as any user program that changes
- *  es deserves to die if it isn't careful.
- */
-#define memcpy(dest,src,n) ({ \
-void * _res = dest; \
-__asm__ ("cld;rep;movsb" \
-	::"D" ((long)(_res)),"S" ((long)(src)),"c" ((long) (n)) \
-	:"di","si","cx"); \
-_res; \
-})
+/* SYMPLUS-PORT: 原 memcpy 宏为 gcc 语句表达式 + rep movsb 汇编 →
+ * string.h 的 static memcpy（语义等价：返回 dest）。 */
+#ifndef _ASM_MEMORY_H
+#define _ASM_MEMORY_H
+
+#include <string.h>
+
+#endif

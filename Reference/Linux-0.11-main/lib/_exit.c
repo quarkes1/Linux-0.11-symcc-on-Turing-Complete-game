@@ -9,5 +9,7 @@
 
 volatile void _exit(int exit_code)
 {
-	__asm__("int $0x80"::"a" (__NR_exit),"b" (exit_code));
+	/* SYMPLUS-PORT: int $0x80 syscall -> halt loop (real syscall in M3) */
+	for (;;)
+		;
 }

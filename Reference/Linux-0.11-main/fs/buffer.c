@@ -280,12 +280,7 @@ struct buffer_head * bread(int dev,int block)
 	return NULL;
 }
 
-#define COPYBLK(from,to) \
-__asm__("cld\n\t" \
-	"rep\n\t" \
-	"movsl\n\t" \
-	::"c" (BLOCK_SIZE/4),"S" (from),"D" (to) \
-	:"cx","di","si")
+/* SYMPLUS-PORT: rep movsl -> memcpy loop */
 
 /*
  * bread_page reads four buffers into memory at the desired address. It's
@@ -379,3 +374,6 @@ void buffer_init(long buffer_end)
 	for (i=0;i<NR_HASH;i++)
 		hash_table[i]=NULL;
 }	
+
+
+

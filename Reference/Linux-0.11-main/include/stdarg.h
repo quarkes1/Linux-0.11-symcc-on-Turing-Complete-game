@@ -18,7 +18,7 @@ typedef char *va_list;
   AP = ((char *) &(LASTARG) + __va_rounded_size (LASTARG)))
 #endif
 
-void va_end (va_list);		/* Defined in gnulib */
+/* SYMPLUS-PORT: removed "void va_end (va_list);" decl - conflicts with va_end macro */
 #define va_end(AP)
 
 #define va_arg(AP, TYPE)						\
@@ -26,3 +26,4 @@ void va_end (va_list);		/* Defined in gnulib */
   *((TYPE *) (AP - __va_rounded_size (TYPE))))
 
 #endif /* _STDARG_H */
+

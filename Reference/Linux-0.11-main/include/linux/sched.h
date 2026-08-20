@@ -154,11 +154,10 @@ extern void wake_up(struct task_struct ** p);
 #define FIRST_LDT_ENTRY (FIRST_TSS_ENTRY+1)
 #define _TSS(n) ((((unsigned long) n)<<4)+(FIRST_TSS_ENTRY<<3))
 #define _LDT(n) ((((unsigned long) n)<<4)+(FIRST_LDT_ENTRY<<3))
-#define ltr(n) __asm__("ltr %%ax"::"a" (_TSS(n)))
-#define lldt(n) __asm__("lldt %%ax"::"a" (_LDT(n)))
-#define str(n) \
-__asm__("str %%ax\n\t" \
-	"subl %2,%%eax\n\t" \
+/* SYMPLUS-PORT: inline asm -> stub (real impl in M3) */
+#define ltr(n) ((void)0)
+#define lldt(n) ((void)0)
+#define str(n) ((n) = 0)
 	"shrl $4,%%eax" \
 	:"=a" (n) \
 	:"a" (0),"i" (FIRST_TSS_ENTRY<<3))
@@ -168,66 +167,21 @@ __asm__("str %%ax\n\t" \
  * This also clears the TS-flag if the task we switched to has used
  * tha math co-processor latest.
  */
-#define switch_to(n) {\
-struct {long a,b;} __tmp; \
-__asm__("cmpl %%ecx,_current\n\t" \
-	"je 1f\n\t" \
-	"movw %%dx,%1\n\t" \
-	"xchgl %%ecx,_current\n\t" \
-	"ljmp %0\n\t" \
-	"cmpl %%ecx,_last_task_used_math\n\t" \
-	"jne 1f\n\t" \
-	"clts\n" \
-	"1:" \
-	::"m" (*&__tmp.a),"m" (*&__tmp.b), \
-	"d" (_TSS(n)),"c" ((long) task[n])); \
-}
-
+/* SYMPLUS-PORT: inline asm -> stub (real impl in M3) */
+#define switch_to(n) ((void)(n))
 #define PAGE_ALIGN(n) (((n)+0xfff)&0xfffff000)
 
-#define _set_base(addr,base) \
-__asm__("movw %%dx,%0\n\t" \
-	"rorl $16,%%edx\n\t" \
-	"movb %%dl,%1\n\t" \
-	"movb %%dh,%2" \
-	::"m" (*((addr)+2)), \
-	  "m" (*((addr)+4)), \
-	  "m" (*((addr)+7)), \
-	  "d" (base) \
-	:"dx")
-
-#define _set_limit(addr,limit) \
-__asm__("movw %%dx,%0\n\t" \
-	"rorl $16,%%edx\n\t" \
-	"movb %1,%%dh\n\t" \
-	"andb $0xf0,%%dh\n\t" \
-	"orb %%dh,%%dl\n\t" \
-	"movb %%dl,%1" \
-	::"m" (*(addr)), \
-	  "m" (*((addr)+6)), \
-	  "d" (limit) \
-	:"dx")
-
-#define set_base(ldt,base) _set_base( ((char *)&(ldt)) , base )
-#define set_limit(ldt,limit) _set_limit( ((char *)&(ldt)) , (limit-1)>>12 )
-
-#define _get_base(addr) ({\
-unsigned long __base; \
-__asm__("movb %3,%%dh\n\t" \
-	"movb %2,%%dl\n\t" \
-	"shll $16,%%edx\n\t" \
-	"movw %1,%%dx" \
-	:"=d" (__base) \
-	:"m" (*((addr)+2)), \
-	 "m" (*((addr)+4)), \
-	 "m" (*((addr)+7))); \
-__base;})
-
-#define get_base(ldt) _get_base( ((char *)&(ldt)) )
-
-#define get_limit(segment) ({ \
-unsigned long __limit; \
-__asm__("lsll %1,%0\n\tincl %0":"=r" (__limit):"r" (segment)); \
-__limit;})
+/* SYMPLUS-PORT: inline asm -> stub (real impl in M3) */
+#define _set_base(addr,base) ((void)(addr), (void)(base))
+#define set_base(ldt,base) ((void)(ldt), (void)(base)) /* SYMPLUS-PORT: real impl in M3 */
+/* SYMPLUS-PORT: inline asm -> stub (real impl in M3) */
+#define _set_limit(addr,limit) ((void)(addr), (void)(limit))
+#define set_limit(ldt,limit) ((void)(ldt), (void)(limit)) /* SYMPLUS-PORT: real impl in M3 */
+/* SYMPLUS-PORT: inline asm -> stub (real impl in M3) */
+#define _get_base(addr) (0)
+/* SYMPLUS-PORT: inline asm -> stub (real impl in M3) */
+#define get_limit(segment) (0)
 
 #endif
+
+

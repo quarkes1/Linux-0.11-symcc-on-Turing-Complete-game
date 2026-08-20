@@ -78,15 +78,15 @@ void math_state_restore()
 {
 	if (last_task_used_math == current)
 		return;
-	__asm__("fwait");
+	/* SYMPLUS-PORT: fwait -> stub */
 	if (last_task_used_math) {
-		__asm__("fnsave %0"::"m" (last_task_used_math->tss.i387));
+		/* SYMPLUS-PORT: fnsave -> stub */
 	}
 	last_task_used_math=current;
 	if (current->used_math) {
-		__asm__("frstor %0"::"m" (current->tss.i387));
+		/* SYMPLUS-PORT: frstor -> stub */
 	} else {
-		__asm__("fninit"::);
+		/* SYMPLUS-PORT: fninit -> stub */
 		current->used_math=1;
 	}
 }
@@ -400,7 +400,7 @@ void sched_init(void)
 		p++;
 	}
 /* Clear NT, so that we won't have troubles with that later on */
-	__asm__("pushfl ; andl $0xffffbfff,(%esp) ; popfl");
+	/* SYMPLUS-PORT: IF flag clear -> stub */
 	ltr(0);
 	lldt(0);
 	outb_p(0x36,0x43);		/* binary, mode 3, LSB/MSB, ch 0 */
@@ -410,3 +410,8 @@ void sched_init(void)
 	outb(inb_p(0x21)&~0x01,0x21);
 	set_system_gate(0x80,&system_call);
 }
+
+
+
+
+

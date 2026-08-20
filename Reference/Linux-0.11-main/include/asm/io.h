@@ -1,24 +1,11 @@
-#define outb(value,port) \
-__asm__ ("outb %%al,%%dx"::"a" (value),"d" (port))
+/* SYMPLUS-PORT: x86 端口 I/O → stub（SymphonyPlus 无端口；M3 映射到
+ * 屏幕/磁盘地址空间时实现）。原 gcc 语句表达式 ({...}) 语法不支持。 */
+#ifndef _ASM_IO_H
+#define _ASM_IO_H
 
+#define outb(value,port) ((void)(value), (void)(port))
+#define inb(port) (0)
+#define outb_p(value,port) ((void)(value), (void)(port))
+#define inb_p(port) (0)
 
-#define inb(port) ({ \
-unsigned char _v; \
-__asm__ volatile ("inb %%dx,%%al":"=a" (_v):"d" (port)); \
-_v; \
-})
-
-#define outb_p(value,port) \
-__asm__ ("outb %%al,%%dx\n" \
-		"\tjmp 1f\n" \
-		"1:\tjmp 1f\n" \
-		"1:"::"a" (value),"d" (port))
-
-#define inb_p(port) ({ \
-unsigned char _v; \
-__asm__ volatile ("inb %%dx,%%al\n" \
-	"\tjmp 1f\n" \
-	"1:\tjmp 1f\n" \
-	"1:":"=a" (_v):"d" (port)); \
-_v; \
-})
+#endif

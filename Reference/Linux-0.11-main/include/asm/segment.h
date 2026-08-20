@@ -1,64 +1,53 @@
-extern inline unsigned char get_fs_byte(const char * addr)
-{
-	unsigned register char _v;
+/* SYMPLUS-PORT: gcc 内联汇编的 fs/gs 段读写 → 普通内存读写（无 MMU，
+ * 用户段/内核段同地址空间，M3 引入保护后验证）。extern inline →
+ * static（避免多文件重复定义）。 */
+#ifndef _ASM_SEGMENT_H
+#define _ASM_SEGMENT_H
 
-	__asm__ ("movb %%fs:%1,%0":"=r" (_v):"m" (*addr));
-	return _v;
+static unsigned char get_fs_byte(const char *addr)
+{
+	return *addr;
 }
 
-extern inline unsigned short get_fs_word(const unsigned short *addr)
+static unsigned short get_fs_word(const unsigned short *addr)
 {
-	unsigned short _v;
-
-	__asm__ ("movw %%fs:%1,%0":"=r" (_v):"m" (*addr));
-	return _v;
+	return *addr;
 }
 
-extern inline unsigned long get_fs_long(const unsigned long *addr)
+static unsigned long get_fs_long(const unsigned long *addr)
 {
-	unsigned long _v;
-
-	__asm__ ("movl %%fs:%1,%0":"=r" (_v):"m" (*addr)); \
-	return _v;
+	return *addr;
 }
 
-extern inline void put_fs_byte(char val,char *addr)
+static void put_fs_byte(char val, char *addr)
 {
-__asm__ ("movb %0,%%fs:%1"::"r" (val),"m" (*addr));
+	*addr = val;
 }
 
-extern inline void put_fs_word(short val,short * addr)
+static void put_fs_word(short val, short *addr)
 {
-__asm__ ("movw %0,%%fs:%1"::"r" (val),"m" (*addr));
+	*addr = val;
 }
 
-extern inline void put_fs_long(unsigned long val,unsigned long * addr)
+static void put_fs_long(unsigned long val, unsigned long *addr)
 {
-__asm__ ("movl %0,%%fs:%1"::"r" (val),"m" (*addr));
+	*addr = val;
 }
 
-/*
- * Someone who knows GNU asm better than I should double check the followig.
- * It seems to work, but I don't know if I'm doing something subtly wrong.
- * --- TYT, 11/24/91
- * [ nothing wrong here, Linus ]
- */
-
-extern inline unsigned long get_fs() 
+/* SYMPLUS-PORT: 段寄存器读写 → 常量（无段寄存器） */
+static unsigned long get_fs(void)
 {
-	unsigned short _v;
-	__asm__("mov %%fs,%%ax":"=a" (_v):);
-	return _v;
+	return 0;
 }
 
-extern inline unsigned long get_ds() 
+static unsigned long get_ds(void)
 {
-	unsigned short _v;
-	__asm__("mov %%ds,%%ax":"=a" (_v):);
-	return _v;
+	return 0;
 }
 
-extern inline void set_fs(unsigned long val)
+static void set_fs(unsigned long val)
 {
-	__asm__("mov %0,%%fs"::"a" ((unsigned short) val));
+	(void)val;
 }
+
+#endif

@@ -19,11 +19,8 @@ int sync_dev(int dev);
 void wait_for_keypress(void);
 
 /* set_bit uses setb, as gas doesn't recognize setc */
-#define set_bit(bitnr,addr) ({ \
-register int __res __asm__("ax"); \
-__asm__("bt %2,%3;setb %%al":"=a" (__res):"a" (0),"r" (bitnr),"m" (*(addr))); \
-__res; })
-
+/* SYMPLUS-PORT: bt inline asm -> pure C bit test */
+#define set_bit(bitnr,addr) (((*(volatile int *)(addr)) >> (bitnr)) & 1)
 struct super_block super_block[NR_SUPER];
 /* this is initialized in init/main.c */
 int ROOT_DEV = 0;
@@ -279,3 +276,4 @@ void mount_root(void)
 			free++;
 	printk("%d/%d free inodes\n\r",free,p->s_ninodes);
 }
+
