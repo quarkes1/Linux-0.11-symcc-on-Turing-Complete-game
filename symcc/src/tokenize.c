@@ -37,16 +37,22 @@ int64_t tok_num(const Token *t) {
     return t->kind == TK_NUM ? t->val : 0;
 }
 
+bool tok_at_bol(const Token *t) {
+    return t && t->kind != TK_EOF && t->at_bol;
+}
+
 static bool is_punct1(char c) {
     return c == '+' || c == '-' || c == '*' || c == '/' || c == '%' ||
            c == '(' || c == ')' ||
            c == '{' || c == '}' || c == '=' || c == ';' || c == ',' ||
-           c == '<' || c == '>' || c == '!' || c == '&';
+           c == '<' || c == '>' || c == '!' || c == '&' ||
+           c == '#' || c == '?' || c == ':' || c == '^' || c == '~' ||
+           c == '|' || c == '.';
 }
 
 /* 双字符运算符（按最长匹配优先） */
 static bool is_punct2(const char *p) {
-    static const char *ops[] = { "==", "!=", "<=", ">=", "&&", "||" };
+    static const char *ops[] = { "==", "!=", "<=", ">=", "&&", "||", "##" };
     for (size_t i = 0; i < sizeof ops / sizeof ops[0]; i++)
         if (p[0] == ops[i][0] && p[1] == ops[i][1])
             return true;
@@ -59,9 +65,12 @@ static const char *keywords[] = { "return", "int", "char", "unsigned", "void", "
 Token *tokenize(const char *p) {
     Token head = {0};
     Token *cur = &head;
+    bool bol = true;   /* 下一个 token 位于其源码行首（'\n' 后置真，产 token 后置假） */
 
     while (*p) {
         if (isspace((unsigned char)*p)) {
+            if (*p == '\n')
+                bol = true;
             p++;
             continue;
         }
@@ -115,6 +124,8 @@ Token *tokenize(const char *p) {
                 Token *t = new_token(TK_NUM, start, (char *)p);
                 t->val = val;
                 t->is_unsigned = unsuf;
+                t->at_bol = bol;
+                bol = false;
                 cur = cur->next = t;
                 continue;
             }
@@ -131,21 +142,29 @@ Token *tokenize(const char *p) {
                 size_t klen = strlen(keywords[i]);
                 if ((size_t)(p - start) == klen && strncmp(start, keywords[i], klen) == 0) {
                     cur = cur->next = new_token(TK_KEYWORD, start, (char *)p);
+                    cur->at_bol = bol;
+                    bol = false;
                     goto next_char;
                 }
             }
             cur = cur->next = new_token(TK_IDENT, start, (char *)p);
+            cur->at_bol = bol;
+            bol = false;
             continue;
         }
 
-        /* 标点：双字符优先（== != <= >= && ||），再单字符 */
+        /* 标点：双字符优先（== != <= >= && || ##），再单字符 */
         if (is_punct2(p)) {
             cur = cur->next = new_token(TK_PUNCT, (char *)p, (char *)p + 2);
+            cur->at_bol = bol;
+            bol = false;
             p += 2;
             continue;
         }
         if (is_punct1(*p)) {
             cur = cur->next = new_token(TK_PUNCT, (char *)p, (char *)p + 1);
+            cur->at_bol = bol;
+            bol = false;
             p++;
             continue;
         }
@@ -183,6 +202,8 @@ Token *tokenize(const char *p) {
             Token *t = new_token(TK_STR, start, (char *)p);
             t->str = buf;
             t->str_len = blen;
+            t->at_bol = bol;
+            bol = false;
             cur = cur->next = t;
             continue;
         }
@@ -216,6 +237,8 @@ Token *tokenize(const char *p) {
             p++;
             Token *t = new_token(TK_NUM, start, (char *)p);
             t->val = val;
+            t->at_bol = bol;
+            bol = false;
             cur = cur->next = t;
             continue;
         }

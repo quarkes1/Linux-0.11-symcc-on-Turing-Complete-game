@@ -32,6 +32,7 @@ typedef struct Token {
     char *str;       /* TK_STR：展开后的字节（malloc，无 NUL 结尾） */
     int str_len;     /* TK_STR 字节数 */
     bool is_unsigned; /* TK_NUM：u/U 后缀 */
+    bool at_bol;     /* 位于其源码行的行首（预处理器用） */
 } Token;
 
 Token *tokenize(const char *p);
@@ -40,6 +41,28 @@ Token *tokenize(const char *p);
 bool tok_is(const Token *t, const char *s);   /* 标点/关键字文本比较 */
 bool tok_is_kw(const Token *t, const char *kw);
 int64_t tok_num(const Token *t);
+bool tok_at_bol(const Token *t);              /* 该 token 是否位于其源码行的行首 */
+
+/* ---------- 预处理器（M2 Task 1） ---------- */
+
+/* 宏展开/条件编译/#include 展开后的 token 流（供 parse 消费；失败 exit(1)）。
+ * src_name = 当前源文件路径（解析 #include "..." 相对目录用；NULL = 未知/stdin）。
+ * inc_dirs = -I 目录数组；defines = -D 数组（"NAME" 或 "NAME=VALUE"）。
+ * 返回链以 TK_EOF 结尾（malloc，调用方不释放——工具编译器）。 */
+Token *preprocess_tokens(Token *tok, const char *src_name,
+                         const char **inc_dirs, int n_inc,
+                         const char **defines, int n_def);
+
+/* 一站式：phase12（续行合并+注释剥离）→ tokenize → preprocess_tokens。
+ * 返回链 loc 指向内部缓冲（按进程生命周期存活；调用方不 free）。 */
+Token *preprocess_source_text(const char *src, const char *src_name,
+                              const char **inc_dirs, int n_inc,
+                              const char **defines, int n_def);
+
+/* -E 用：tokenize → preprocess_tokens → 文本重建（malloc，调用方 free） */
+char *preprocess_text(const char *src, const char *src_name,
+                      const char **inc_dirs, int n_inc,
+                      const char **defines, int n_def);
 
 /* ---------- 类型 ---------- */
 
