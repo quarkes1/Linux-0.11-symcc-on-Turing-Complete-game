@@ -92,6 +92,17 @@ int main(void) {
         "    jmp halt\n");
     assert(r.regs[1] == 42);
 
+    /* 7. 栈下溢回绕防护：sp 未初始化（0）时 push → sp-4 回绕，
+     *    越界检查不得被 32 位回绕绕过（曾致宿主段错误） */
+    uint8_t bin7[4096];
+    AsmError err7;
+    int n7 = asm_assemble("push r1\nhalt:\njmp halt", bin7, sizeof bin7, &err7);
+    assert(n7 > 0);
+    EmuResult r7 = emu_run(bin7, (size_t)n7, 1 << 20, 1000000);
+    assert(r7.error == 2);
+    free(r7.mem);
+    free(r7.disk);
+
     printf("ALL PASS\n");
     return 0;
 }

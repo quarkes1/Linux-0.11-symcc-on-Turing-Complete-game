@@ -144,15 +144,16 @@ EmuResult emu_run(const uint8_t *bin, size_t bin_len, size_t ram_size, uint64_t 
 
         /* ---------- load/store reg 寻址 ----------
          * load_* %dest, [%adr]：dest@20-23(a)，adr@8-11(c)
-         * store_* [%adr], %value：adr@8-11(c)，value@16-19(b) */
-        case 0x60: if (regs[c] >= ram_size) { error = 2; goto done; } set_reg(regs, a, r.mem[regs[c]]); break;
-        case 0x61: if (regs[c] + 2 > ram_size) { error = 2; goto done; } set_reg(regs, a, rd16(r.mem + regs[c])); break;
-        case 0x62: if (regs[c] + 4 > ram_size) { error = 2; goto done; } set_reg(regs, a, rd32(r.mem + regs[c])); break;
-        case 0x63: if (regs[c] + 4 > r.disk_size) { error = 2; goto done; } set_reg(regs, a, rd32(r.disk + regs[c])); break; /* pload */
-        case 0x64: if (regs[c] >= ram_size) { error = 2; goto done; } r.mem[regs[c]] = (uint8_t)regs[b]; break;
-        case 0x65: if (regs[c] + 2 > ram_size) { error = 2; goto done; } wr16(r.mem + regs[c], (uint16_t)regs[b]); break;
-        case 0x66: if (regs[c] + 4 > ram_size) { error = 2; goto done; } wr32(r.mem + regs[c], regs[b]); break;
-        case 0x67: if (regs[c] + 4 > r.disk_size) { error = 2; goto done; } wr32(r.disk + regs[c], regs[b]); break; /* pstore */
+         * store_* [%adr], %value：adr@8-11(c)，value@16-19(b)
+         * 越界检查用 uint64 加法防 32 位回绕（如 sp 未初始化时 sp-4 = 0xFFFFFFFC） */
+        case 0x60: if ((uint64_t)regs[c] >= ram_size) { error = 2; goto done; } set_reg(regs, a, r.mem[regs[c]]); break;
+        case 0x61: if ((uint64_t)regs[c] + 2 > ram_size) { error = 2; goto done; } set_reg(regs, a, rd16(r.mem + regs[c])); break;
+        case 0x62: if ((uint64_t)regs[c] + 4 > ram_size) { error = 2; goto done; } set_reg(regs, a, rd32(r.mem + regs[c])); break;
+        case 0x63: if ((uint64_t)regs[c] + 4 > r.disk_size) { error = 2; goto done; } set_reg(regs, a, rd32(r.disk + regs[c])); break; /* pload */
+        case 0x64: if ((uint64_t)regs[c] >= ram_size) { error = 2; goto done; } r.mem[regs[c]] = (uint8_t)regs[b]; break;
+        case 0x65: if ((uint64_t)regs[c] + 2 > ram_size) { error = 2; goto done; } wr16(r.mem + regs[c], (uint16_t)regs[b]); break;
+        case 0x66: if ((uint64_t)regs[c] + 4 > ram_size) { error = 2; goto done; } wr32(r.mem + regs[c], regs[b]); break;
+        case 0x67: if ((uint64_t)regs[c] + 4 > r.disk_size) { error = 2; goto done; } wr32(r.disk + regs[c], regs[b]); break; /* pstore */
 
         /* ---------- load/store imm 寻址 ----------
          * load_* %dest, [%adr]：dest@20-23(a)，adr imm@0-15
