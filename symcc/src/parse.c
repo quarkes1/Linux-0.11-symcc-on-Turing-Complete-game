@@ -725,6 +725,9 @@ Program *parse(Token *toks) {
 
     prog->globals = globals;
     prog->funcs = funcs;
+    /* 截断字符串链表：str_tail 指向最后串的 next（即 token 流后续），
+     * 不置 NULL 会把流里剩余的标点 token 全部当成字符串发射（空串垃圾） */
+    *str_tail = NULL;
     prog->strs = str_head;
 
     /* 必须有 main */

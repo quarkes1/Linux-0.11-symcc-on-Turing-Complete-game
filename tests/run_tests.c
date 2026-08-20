@@ -27,15 +27,26 @@ static void compile_and_run(const char *c_file, int expected_exit,
     FILE *fp;
     size_t tlen;
 
-    /* 多文件：先读额外文件（runtime 等），再读被测文件。
+    /* 多文件：先读额外文件（runtime 等，逗号分隔多个），再读被测文件。
      * 顺序要求：被调函数先定义（M1 单遍；symcc.exe 多文件同样按
      * 命令行顺序拼接）。 */
     tlen = 0;
     if (extra_file[0]) {
-        fp = fopen(extra_file, "rb");
-        assert(fp != NULL);
-        tlen = fread(text, 1, sizeof text - 1, fp);
-        fclose(fp);
+        char list[256];
+        strncpy(list, extra_file, sizeof list - 1);
+        list[sizeof list - 1] = 0;
+        char *rest = list;
+        while (rest && *rest) {
+            char *comma = strchr(rest, ',');
+            if (comma)
+                *comma = 0;
+            fp = fopen(rest, "rb");
+            assert(fp != NULL);
+            tlen += fread(text + tlen, 1, sizeof text - 1 - tlen, fp);
+            fclose(fp);
+            text[tlen++] = '\n';          /* 文件间换行分隔 */
+            rest = comma ? comma + 1 : NULL;
+        }
         if (tlen >= sizeof text - 2) {
             fprintf(stderr, "text buffer overflow (%s)\n", extra_file);
             exit(1);
@@ -77,6 +88,9 @@ int main(void) {
     compile_and_run("tests/test_char.c", 66, NULL, 0, "");
     compile_and_run("tests/test_div.c", 1, NULL, 0, "runtime/divsi3.c");
     compile_and_run("tests/test_udiv.c", 1, NULL, 0, "runtime/divsi3.c");
+    /* Hello 验收：帧缓冲 mem[0x2000:0x2005] == "Hello"，exit 42 */
+    compile_and_run("tests/test_hello.c", 42, "Hello", 5,
+                    "runtime/tty.c,runtime/divsi3.c");
     printf("ALL TESTS PASSED\n");
     return 0;
 }

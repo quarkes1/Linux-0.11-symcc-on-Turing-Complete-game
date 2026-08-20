@@ -3,6 +3,9 @@
 *.asm
 *.bin
 
+# runtime/crt0.asm 是编译器读取的源码（crt0 模板），必须跟踪
+!runtime/crt0.asm
+
 # 汇编器/模拟器/编译器输出文件
 tests/*.asm
 tests/*.bin

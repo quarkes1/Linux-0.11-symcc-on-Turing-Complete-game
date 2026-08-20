@@ -10,9 +10,9 @@
  *   mov r10,sp、sub sp,sp,frame；实参 k 在 [r10+8+4k]（push 后入口），
  *   拷入栈槽 [r10-4*(k+1)]；尾言 mov sp,r10; pop r10; ret
  * - 全局变量/字符串在数据段（label = 名字；16 位寻址，M1 程序 < 64KB）
- * - 立即数上限 0xFFFF（ISA 硬限制）：超出直接报错，编译中止
- * - M1 无 crt0：main 直启（mov sp,0x4000），main 返回用 jmp halt
- *   （Task 9 正式 crt0 换 ret 链路）
+ * - 立即数上限 0xFFFF（ISA 硬限制）：超出拆 16 位拼接，上限 0xFFFFFFFF
+ * - 程序布局：crt0.asm（启动：配置屏幕 + 设栈 + call main）→ 函数 →
+ *   数据段 → halt。main 是普通函数（crt0 负责栈初始化与入口）
  */
 
 #include <stdio.h>
@@ -20,10 +20,13 @@
 #include <string.h>
 
 #include "symcc.h"
+#include "symcc/include/config.h"
+
+#define XSTR(x) STR(x)
+#define STR(x) #x
 
 static FILE *out_asm;
 static int label_cnt;
-static bool in_main;   /* 当前生成函数是否是 main（return 处理不同） */
 
 static void err_imm(Token *t, int64_t val) {
     fprintf(stderr, "constant too large for 16-bit immediate: %lld (%.*s)\n",
@@ -318,14 +321,9 @@ static void gen_stmt(Node *n) {
     case ND_RETURN:
         gen_expr(n->lhs);
         fprintf(out_asm, "    ; return\n");
-        if (in_main) {
-            fprintf(out_asm, "    mov sp, r10        ; 恢复帧\n");
-            fprintf(out_asm, "    jmp halt           ; M1 占位：无 crt0\n");
-        } else {
-            fprintf(out_asm, "    mov sp, r10\n");
-            fprintf(out_asm, "    pop r10            ; 恢复调用方帧指针\n");
-            fprintf(out_asm, "    ret\n");
-        }
+        fprintf(out_asm, "    mov sp, r10\n");
+        fprintf(out_asm, "    pop r10            ; 恢复调用方帧指针\n");
+        fprintf(out_asm, "    ret\n");
         return;
     case ND_IF: {
         const char *Lelse = new_label();
@@ -376,27 +374,18 @@ static void gen_stmt(Node *n) {
     }
 }
 
-/* 函数尾言（体末尾无 return 时的兜底） */
+/* 函数尾言（体末尾无 return 时的兜底；main 也是普通函数，
+ * 返回后回到 crt0 的 halt） */
 static void gen_epilogue(void) {
-    if (in_main) {
-        fprintf(out_asm, "    jmp halt           ; main 无 return 兜底\n");
-    } else {
-        fprintf(out_asm, "    mov sp, r10\n");
-        fprintf(out_asm, "    pop r10            ; 恢复调用方帧指针\n");
-        fprintf(out_asm, "    ret\n");
-    }
+    fprintf(out_asm, "    mov sp, r10\n");
+    fprintf(out_asm, "    pop r10            ; 恢复调用方帧指针\n");
+    fprintf(out_asm, "    ret\n");
 }
 
 /* 函数序言 + 体 + 尾言 */
 static void gen_func(Func *f) {
-    in_main = (f->len == 4 && strncmp(f->name, "main", 4) == 0);
-
     fprintf(out_asm, "\n%s:\n", f->name);
-    if (in_main) {
-        fprintf(out_asm, "    mov sp, 0x4000       ; crt0 占位：初始化栈顶（Task 9 正式 crt0）\n");
-    } else {
-        fprintf(out_asm, "    push r10             ; 保存调用方帧指针\n");
-    }
+    fprintf(out_asm, "    push r10             ; 保存调用方帧指针\n");
     fprintf(out_asm, "    mov r10, sp          ; 帧基址\n");
     if (f->frame_size)
         fprintf(out_asm, "    sub sp, sp, %d        ; 帧：局部变量 %d 字节\n",
@@ -437,14 +426,43 @@ static void emit_data(Program *prog) {
     }
 }
 
+/* 输出头：拼接 runtime/crt0.asm（FRAMEBUF_BASE 占位符 → config.h 值）。
+ * crt0 在地址 0 执行：配置屏幕（ASCII 8 + 帧缓冲基址）、设栈、call main。 */
+static void emit_crt0(void) {
+    static char crt0[8192];
+    FILE *fp = fopen("runtime/crt0.asm", "rb");
+    if (!fp) {
+        fprintf(stderr, "codegen: cannot open runtime/crt0.asm (run from repo root?)\n");
+        exit(1);
+    }
+    size_t n = fread(crt0, 1, sizeof crt0 - 1, fp);
+    fclose(fp);
+    crt0[n] = 0;
+
+    const char *val = XSTR(FRAMEBUF_BASE);
+    const char *mark = "FRAMEBUF_BASE";
+    const char *rest = crt0;
+    for (const char *hit = strstr(rest, mark); hit; hit = strstr(rest, mark)) {
+        fwrite(rest, 1, (size_t)(hit - rest), out_asm);
+        fputs(val, out_asm);
+        rest = hit + strlen(mark);
+    }
+    fputs(rest, out_asm);
+    /* main 返回后必须跳 halt：否则会落入紧跟在 call main 之后的 main 自身
+     * 入口（call 的返回地址 = call 后的下一条指令 = main 开头），无限重入 main */
+    fputs("\n    jmp halt\n", out_asm);
+}
+
 bool codegen(Program *prog, FILE *out) {
     out_asm = out;
     label_cnt = 0;
 
     fprintf(out, "; symcc 输出 — SymphonyPlus 汇编\n");
 
-    /* 函数顺序：main 必须最先（模拟器从地址 0 执行；数据段不得挡在入口），
-     * 其余按定义顺序（链表是逆序，恢复正序） */
+    emit_crt0();
+
+    /* 函数顺序：main 必须最先（入口由 crt0 的 call main 决定，紧随其后
+     * 保证 16 位相对寻址可达），其余按定义顺序（链表是逆序，恢复正序） */
     static Func *flist[256];
     int n = 0;
     for (Func *f = prog->funcs; f; f = f->next)
