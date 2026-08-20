@@ -45,33 +45,110 @@ static void emit_label(const char *l) {
     fprintf(out_asm, "%s:\n", l);
 }
 
-/* 数字常量 → r1。
+/* 数字常量 → 指定寄存器。
  * 立即数上限 16 位：>0xFFFF 拆高位/低位拼接（mov hi; lsl 16; or lo），
- * 上限 0xFFFFFFFF（M1 无 64 位） */
-static void gen_num(int64_t val, Token *t) {
+ * 上限 0xFFFFFFFF（M2 无 64 位） */
+static void gen_num_reg(int reg, int64_t val, Token *t) {
     if (val > 0xFFFFFFFFLL || val < 0)
         err_imm(t, val);
     int64_t hi = (val >> 16) & 0xFFFF;
     int64_t lo = val & 0xFFFF;
     if (hi) {
-        fprintf(out_asm, "    mov r1, %lld        ; 常量高位\n", (long long)hi);
-        fprintf(out_asm, "    lsl r1, r1, 16\n");
+        fprintf(out_asm, "    mov r%d, %lld        ; 常量高位\n", reg, (long long)hi);
+        fprintf(out_asm, "    lsl r%d, r%d, 16\n", reg, reg);
         if (lo)
-            fprintf(out_asm, "    or r1, r1, %lld     ; 常量低位\n", (long long)lo);
+            fprintf(out_asm, "    or r%d, r%d, %lld     ; 常量低位\n", reg, reg, (long long)lo);
     } else {
-        fprintf(out_asm, "    mov r1, %lld        ; %lld\n", (long long)lo, (long long)val);
+        fprintf(out_asm, "    mov r%d, %lld        ; %lld\n", reg, (long long)lo, (long long)val);
     }
 }
 
-/* 变量地址 → r9。局部变量相对帧基址 r10（函数入口 sp），
- * 因为 push/pop 会改变 sp，若相对 sp 则压栈后变量错位。 */
-static void gen_addr(Node *n) {
-    fprintf(out_asm, "    sub r9, r10, %d    ; addr of var\n", -n->offset);
+static void gen_num(int64_t val, Token *t) {
+    gen_num_reg(1, val, t);
 }
 
-/* 元素大小：char=1，int/指针=4（指针算术缩放用） */
-static int size_of(Type *t) {
-    return t->kind == TY_CHAR ? 1 : 4;
+static void gen_expr(Node *n);
+static void gen_member_addr(Node *n);
+static void gen_laddr(Node *n);
+
+/* 左值地址 → r9。局部变量相对帧基址 r10（函数入口 sp）——push/pop 会
+ * 改变 sp，若相对 sp 则压栈后变量错位；全局/字符串 = label 地址。 */
+static void gen_laddr(Node *n) {
+    switch (n->kind) {
+    case ND_VAR:
+        fprintf(out_asm, "    sub r9, r10, %d    ; addr of var\n", -n->offset);
+        return;
+    case ND_GVAR:
+        fprintf(out_asm, "    mov r9, @%s        ; addr of global\n", n->name);
+        return;
+    case ND_DEREF:
+        gen_expr(n->lhs);
+        fprintf(out_asm, "    mov r9, r1          ; deref addr\n");
+        return;
+    case ND_MEMBER:
+        gen_member_addr(n);
+        return;
+    default:
+        fprintf(stderr, "codegen: not an lvalue\n");
+        exit(1);
+    }
+}
+
+/* 成员地址 → r9：聚合对象地址（或指针值）+ 字节偏移 */
+static void gen_member_addr(Node *n) {
+    if (n->lhs->kind == ND_DEREF) {
+        gen_expr(n->lhs->lhs);             /* 指针值（p->m 展开） */
+        if (n->val)
+            fprintf(out_asm, "    add r9, r1, %d      ; member +%lld\n", (int)n->val, (long long)n->val);
+        else
+            fprintf(out_asm, "    mov r9, r1          ; member\n");
+    } else {
+        gen_laddr(n->lhs);
+        if (n->val)
+            fprintf(out_asm, "    add r9, r9, %d      ; member +%lld\n", (int)n->val, (long long)n->val);
+    }
+}
+
+/* 位域加载：r9 = 单元地址 → r1 = 位域值（符号/零扩展）。
+ * 位域从单元最高位（bit_offset=0）起打包：值 = (单元 >> (32-bo-bw)) & mask */
+static void gen_load_bitfield(Node *n) {
+    fprintf(out_asm, "    load_32 r1, [r9]    ; bitfield unit\n");
+    int sh = 32 - n->bit_offset - n->bit_width;
+    if (sh > 0) {
+        gen_num_reg(2, sh, n->tok);
+        fprintf(out_asm, "    lsr r1, r1, r2\n");
+    }
+    int64_t mask = (n->bit_width >= 32) ? 0xFFFFFFFFLL
+                                        : ((1LL << n->bit_width) - 1);
+    if (mask != 0xFFFFFFFFLL) {
+        gen_num_reg(2, mask, n->tok);
+        fprintf(out_asm, "    and r1, r1, r2\n");
+    }
+    if (!n->ty->is_unsigned && n->bit_width < 32) {
+        /* 有符号位域：符号扩展 */
+        fprintf(out_asm, "    lsl r1, r1, %d\n", 32 - n->bit_width);
+        fprintf(out_asm, "    asr r1, r1, %d\n", 32 - n->bit_width);
+    }
+}
+
+/* 位域存储：r9 = 单元地址，r1 = 值 → 读-改-写单元 */
+static void gen_store_bitfield(Node *n) {
+    int sh = 32 - n->bit_offset - n->bit_width;
+    int64_t mask = (n->bit_width >= 32) ? 0xFFFFFFFFLL
+                                        : ((1LL << n->bit_width) - 1);
+    fprintf(out_asm, "    load_32 r2, [r9]    ; bitfield unit\n");
+    gen_num_reg(3, mask, n->tok);
+    fprintf(out_asm, "    and r1, r1, r3      ; 值截断\n");
+    if (sh > 0)
+        fprintf(out_asm, "    lsl r1, r1, %d\n", sh);
+    if (sh > 0) {
+        fprintf(out_asm, "    lsl r3, r3, %d      ; mask<<shift\n", sh);
+    }
+    gen_num_reg(4, 0xFFFFFFFFLL, n->tok);
+    fprintf(out_asm, "    xor r3, r3, r4      ; ~(mask<<shift)\n");
+    fprintf(out_asm, "    and r2, r2, r3      ; 清目标位\n");
+    fprintf(out_asm, "    or r2, r2, r1       ; 组合\n");
+    fprintf(out_asm, "    store_32 [r9], r2\n");
 }
 
 /* 按类型从 [r9] 加载到 r1：char 符号扩展（unsigned char 零扩展） */
@@ -150,56 +227,69 @@ static void gen_expr(Node *n) {
         gen_num(n->val, n->tok);
         return;
     case ND_VAR:
-        gen_addr(n);
+    case ND_GVAR:
+        /* 聚合（数组/结构体/联合）表达式求值 = 地址；标量加载值 */
+        if (n->ty->kind == TY_ARRAY || n->ty->kind == TY_STRUCT || n->ty->kind == TY_UNION) {
+            gen_laddr(n);
+            fprintf(out_asm, "    mov r1, r9          ; aggregate addr\n");
+            return;
+        }
+        gen_laddr(n);
         gen_load(n->ty);
         return;
-    case ND_GVAR:
-        if (n->ty->kind == TY_CHAR)
-            fprintf(out_asm, "    load_8 r1, [@%s]    ; global char\n", n->name);
-        else
-            fprintf(out_asm, "    load_32 r1, [@%s]   ; global\n", n->name);
-        if (n->ty->kind == TY_CHAR) {
-            fprintf(out_asm, "    lsl r1, r1, 24\n");
-            fprintf(out_asm, "    %s r1, r1, 24   ; %s扩展\n",
-                    n->ty->is_unsigned ? "lsr" : "asr",
-                    n->ty->is_unsigned ? "零" : "符号");
-        }
+    case ND_FUNC:
+        fprintf(out_asm, "    mov r1, @%s        ; func addr\n", n->name);
         return;
     case ND_STR:
         fprintf(out_asm, "    mov r1, @s%lld      ; string\n", (long long)n->val);
         return;
     case ND_ADDR:
-        /* 地址 → r1：局部 = r10-|offset|；全局/字符串 = label 地址 */
-        if (n->lhs->kind == ND_VAR)
-            fprintf(out_asm, "    sub r1, r10, %d    ; addr of var\n", -n->lhs->offset);
-        else if (n->lhs->kind == ND_GVAR)
-            fprintf(out_asm, "    mov r1, @%s        ; addr of global\n", n->lhs->name);
-        else
+        if (n->lhs->kind == ND_STR) {
             fprintf(out_asm, "    mov r1, @s%lld     ; addr of string\n", (long long)n->lhs->val);
+            return;
+        }
+        gen_laddr(n->lhs);
+        fprintf(out_asm, "    mov r1, r9          ; addr\n");
         return;
     case ND_DEREF:
         gen_expr(n->lhs);
-        fprintf(out_asm, "    mov r9, r1          ; deref addr\n");
-        gen_load(n->ty);
+        if (n->ty->kind != TY_ARRAY && n->ty->kind != TY_STRUCT && n->ty->kind != TY_UNION) {
+            fprintf(out_asm, "    mov r9, r1          ; deref addr\n");
+            gen_load(n->ty);
+        }
+        return;
+    case ND_MEMBER:
+        gen_member_addr(n);
+        if (n->bit_width >= 0)
+            gen_load_bitfield(n);
+        else
+            gen_load(n->ty);
+        return;
+    case ND_CAST:
+        gen_expr(n->lhs);
+        if (n->ty->kind == TY_CHAR) {
+            /* 截断到 8 位 + 符号/零扩展 */
+            fprintf(out_asm, "    lsl r1, r1, 24     ; cast char\n");
+            fprintf(out_asm, "    %s r1, r1, 24   ; %s扩展\n",
+                    n->ty->is_unsigned ? "lsr" : "asr",
+                    n->ty->is_unsigned ? "零" : "符号");
+        }
+        /* 其余转换（int↔指针↔unsigned）同宽无操作 */
+        return;
+    case ND_BITNOT:
+        gen_expr(n->lhs);
+        gen_num_reg(2, 0xFFFFFFFFLL, n->tok);
+        fprintf(out_asm, "    xor r1, r1, r2     ; ~\n");
         return;
     case ND_ASSIGN:
-        if (n->lhs->kind == ND_DEREF) {
-            gen_expr(n->lhs->lhs);       /* 地址 */
-            fprintf(out_asm, "    push r1            ; 暂存地址\n");
-            gen_expr(n->rhs);
-            fprintf(out_asm, "    pop r9             ; 取回地址\n");
-            gen_store(n->lhs->ty);
-        } else if (n->lhs->kind == ND_GVAR) {
-            gen_expr(n->rhs);
-            if (n->lhs->ty->kind == TY_CHAR)
-                fprintf(out_asm, "    store_8 [@%s], r1  ; = global char\n", n->lhs->name);
-            else
-                fprintf(out_asm, "    store_32 [@%s], r1  ; = global\n", n->lhs->name);
-        } else {
-            gen_expr(n->rhs);
-            gen_addr(n->lhs);
-            gen_store(n->lhs->ty);
-        }
+        gen_laddr(n->lhs);           /* 先求左值地址（无副作用） */
+        fprintf(out_asm, "    push r9            ; 暂存地址\n");
+        gen_expr(n->rhs);
+        fprintf(out_asm, "    pop r9             ; 取回地址\n");
+        if (n->lhs->bit_width >= 0)
+            gen_store_bitfield(n->lhs);
+        else
+            gen_store(n->ty);
         return;
     case ND_CALL: {
         /* 实参从右往左求值并 push（全栈传参）→ call → 清理 */
@@ -211,7 +301,18 @@ static void gen_expr(Node *n) {
             gen_expr(args[k]);
             fprintf(out_asm, "    push r1            ; arg %d\n", k);
         }
-        fprintf(out_asm, "    call %s\n", n->name);
+        if (n->name) {
+            fprintf(out_asm, "    call %s\n", n->name);
+        } else {
+            /* 动态调用（函数指针）：游戏无 call reg，展开为
+             * counter r2; add r2,r2,20; push r2; jmp r1 —— 与静态
+             * call 等长（20 字节），栈布局一致 */
+            gen_expr(n->lhs);            /* r1 = 函数地址 */
+            fprintf(out_asm, "    counter r2         ; 自身指令地址\n");
+            fprintf(out_asm, "    add r2, r2, 20     ; 越过 push 与 jmp\n");
+            fprintf(out_asm, "    push r2            ; 返回地址\n");
+            fprintf(out_asm, "    jmp r1             ; 动态调用\n");
+        }
         if (na > 0)
             fprintf(out_asm, "    add sp, sp, %d      ; 清理实参\n", 4 * na);
         return;
@@ -233,26 +334,41 @@ static void gen_expr(Node *n) {
         gen_logor(n);
         return;
     case ND_ADD:
+        /* 指针算术已在 parse 期缩放（p+n → n×elem），此处纯加 */
+        gen_expr(n->rhs);
+        fprintf(out_asm, "    push r1            ; 暂存右操作数\n");
+        gen_expr(n->lhs);
+        fprintf(out_asm, "    pop r2             ; 取回右操作数\n");
+        fprintf(out_asm, "    add r1, r1, r2     ; +\n");
+        return;
     case ND_SUB:
-        /* 指针算术：p+n → n×元素大小；p-q（两个指针）→ 差÷元素大小 */
-        {
-            bool ptr_l = n->lhs->ty->kind == TY_PTR;
-            bool ptr_r = n->rhs->ty->kind == TY_PTR;
-            gen_expr(n->rhs);
-            if (ptr_l && !ptr_r && size_of(n->lhs->ty->base) == 4)
-                fprintf(out_asm, "    mul r1, r1, 4      ; ptr arith: n*4\n");
-            fprintf(out_asm, "    push r1            ; 暂存右操作数\n");
-            gen_expr(n->lhs);
-            fprintf(out_asm, "    pop r2             ; 取回右操作数\n");
-            if (n->kind == ND_ADD) {
-                fprintf(out_asm, "    add r1, r1, r2     ; +\n");
-            } else {
-                fprintf(out_asm, "    sub r1, r1, r2     ; -\n");
-                if (ptr_l && ptr_r && size_of(n->lhs->ty->base) == 4)
-                    fprintf(out_asm, "    asr r1, r1, 2     ; ptr diff /4\n");
+        gen_expr(n->rhs);
+        fprintf(out_asm, "    push r1            ; 暂存右操作数\n");
+        gen_expr(n->lhs);
+        fprintf(out_asm, "    pop r2             ; 取回右操作数\n");
+        fprintf(out_asm, "    sub r1, r1, r2     ; -\n");
+        if (n->val) {
+            /* 指针差：÷元素大小（n->val = elem size，parse 期设置）。
+             * 1 无操作、2/4/8 移位、其他调用 __divsi3 */
+            if (n->val == 2)
+                fprintf(out_asm, "    asr r1, r1, 1      ; ptr diff /2\n");
+            else if (n->val == 4)
+                fprintf(out_asm, "    asr r1, r1, 2      ; ptr diff /4\n");
+            else if (n->val == 8)
+                fprintf(out_asm, "    asr r1, r1, 3      ; ptr diff /8\n");
+            else if (n->val != 1) {
+                fprintf(out_asm, "    push r1            ; 暂存差值\n");
+                gen_num(n->val, n->tok);
+                fprintf(out_asm, "    push r1            ; arg1 = 元素大小\n");
+                fprintf(out_asm, "    pop r2\n");
+                fprintf(out_asm, "    pop r1\n");
+                fprintf(out_asm, "    push r2\n");
+                fprintf(out_asm, "    push r1\n");
+                fprintf(out_asm, "    call __divsi3      ; ptr diff /elem\n");
+                fprintf(out_asm, "    add sp, sp, 8\n");
             }
-            return;
         }
+        return;
     case ND_MUL:
     case ND_DIV:
     case ND_MOD:
@@ -312,8 +428,9 @@ static void gen_stmt(Node *n);
 /* 语句链表：块 { ... } 产生链表，必须全部生成（曾只生成头语句，
  * 导致 while/if 体内第二条语句被丢弃 → i++ 缺失 → 死循环） */
 static void gen_stmts(Node *n) {
-    for (; n; n = n->next)
+    for (; n; n = n->next) {
         gen_stmt(n);
+    }
 }
 
 static void gen_stmt(Node *n) {
@@ -404,11 +521,45 @@ static void gen_func(Func *f) {
     gen_epilogue();
 }
 
-/* 数据段：全局变量（label = 名字）+ 字符串（label = s%d） */
+/* 数据段：全局变量（label = 名字，init_data 字节大端发射）+ 字符串（label = s%d） */
 static void emit_data(Program *prog) {
     for (Global *g = prog->globals; g; g = g->next) {
         fprintf(out_asm, "\n%s:\n", g->name);
-        fprintf(out_asm, "    U32 %lld\n", (long long)g->init_val);
+        if (!g->init_data || g->init_data_len == 0) {
+            fprintf(out_asm, "    U32 0\n");
+            continue;
+        }
+        int n = g->init_data_len;
+        int off = 0;
+        for (; off + 4 <= n; off += 4) {
+            /* 字符串 reloc 槽 → 引用 label @s%d（resolve_refs 解析为地址） */
+            int sidx = -1;
+            for (int k = 0; k < g->n_str_relocs; k++)
+                if (g->str_relocs[2 * k] == off) {
+                    sidx = g->str_relocs[2 * k + 1];
+                    break;
+                }
+            if (sidx >= 0) {
+                fprintf(out_asm, "    U32 @s%d\n", sidx);
+                continue;
+            }
+            /* 函数地址 reloc 槽 → 引用 label @name */
+            const char *fname = NULL;
+            for (int k = 0; k < g->n_func_relocs; k++)
+                if (g->func_reloc_offsets[k] == off) {
+                    fname = g->func_reloc_names[k];
+                    break;
+                }
+            if (fname) {
+                fprintf(out_asm, "    U32 @%s\n", fname);
+                continue;
+            }
+            fprintf(out_asm, "    U32 0x%02x%02x%02x%02x\n",
+                    g->init_data[off], g->init_data[off + 1],
+                    g->init_data[off + 2], g->init_data[off + 3]);
+        }
+        for (; off < n; off++)
+            fprintf(out_asm, "    U8 %d\n", g->init_data[off]);
     }
     int idx = 0;
     for (Token *t = prog->strs; t; t = t->next) {

@@ -91,6 +91,16 @@ int main(void) {
     /* Hello 验收：帧缓冲 mem[0x2000:0x2005] == "Hello"，exit 42 */
     compile_and_run("tests/test_hello.c", 42, "Hello", 5,
                     "runtime/tty.c,runtime/divsi3.c");
+    /* M2 Task 2 验收：typedef / enum / struct / 位域 / 数组 / 初始化器 /
+     * 函数指针 / static 局部 / sizeof / cast */
+    compile_and_run("tests/test_typedef_enum.c", 15, NULL, 0, "");
+    compile_and_run("tests/test_struct.c", 8, NULL, 0, "");
+    compile_and_run("tests/test_bitfield.c", 72, NULL, 0, "");
+    compile_and_run("tests/test_array.c", 15, NULL, 0, "");
+    compile_and_run("tests/test_init.c", 150, NULL, 0, "");
+    compile_and_run("tests/test_fnptr.c", 7, NULL, 0, "");
+    compile_and_run("tests/test_static_local.c", 21, NULL, 0, "");
+    compile_and_run("tests/test_sizeof_cast.c", 69, NULL, 0, "");
     printf("ALL TESTS PASSED\n");
     return 0;
 }

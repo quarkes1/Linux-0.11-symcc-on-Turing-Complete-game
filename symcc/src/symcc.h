@@ -67,10 +67,32 @@ char *preprocess_text(const char *src, const char *src_name,
 /* ---------- 类型 ---------- */
 
 typedef struct Type Type;
+typedef struct Member Member;
+struct Member {
+    struct Member *next;
+    char *name;
+    int len;
+    Type *ty;
+    int offset;          /* STRUCT: 字节偏移；UNION: 0；ENUM: 常量值 */
+    int bit_offset;      /* 位域：存储单元（4 字节）内位偏移，大端最高位起；-1 = 非位域 */
+    int bit_width;       /* 位域宽度；-1 = 非位域 */
+};
+
+typedef struct Type Type;
 struct Type {
-    enum { TY_INT, TY_CHAR, TY_PTR, TY_VOID } kind;
-    Type *base;          /* TY_PTR：指向的类型 */
-    bool is_unsigned;    /* 供 Task 8 有符号/无符号除法区分 */
+    enum { TY_INT, TY_CHAR, TY_PTR, TY_VOID, TY_ARRAY, TY_STRUCT, TY_UNION, TY_FUNC } kind;
+    Type *base;          /* PTR: 指向的类型；ARRAY: 元素类型；FUNC: 返回类型 */
+    bool is_unsigned;    /* 供有符号/无符号除法、比较、右移区分 */
+    int64_t array_len;   /* TY_ARRAY：元素数；-1 = 不完整（extern/形参/推断） */
+    Member *members;     /* TY_STRUCT/TY_UNION */
+    int size;            /* 布局字节数（STRUCT/UNION 4 对齐；ARRAY 元素总字节） */
+    char *tag;           /* struct/union/enum 标签（malloc 或 NULL） */
+    /* TY_FUNC 参数信息（func_type 填；数组/函数形参已退化指针） */
+    int nargs;
+    Type *param_tys[64];
+    char *param_names[64];
+    bool is_knr;         /* K&R 旧式（参数类型未声明/未知） */
+    bool is_variadic;    /* 含 "..." */
 };
 
 extern Type *ty_int, *ty_char, *ty_void;   /* 单例（parse.c） */
@@ -87,13 +109,13 @@ enum {
     ND_MOD,      /* % 有符号调用 __modsi3，无符号直接 mod */
     ND_NEG,
     ND_VAR,      /* 表达式：读局部变量（offset 相对 sp，负值） */
-    ND_ASSIGN,   /* lhs = 变量节点，rhs = 表达式 */
+    ND_ASSIGN,   /* lhs = 可寻址表达式，rhs = 表达式（M2 泛化：ND_VAR/GVAR/DEREF/MEMBER） */
     ND_EQ,       /* == */
     ND_NE,       /* != */
-    ND_LT,       /* <  有符号 */
-    ND_LE,       /* <= 有符号 */
-    ND_GT,       /* >  有符号 */
-    ND_GE,       /* >= 有符号 */
+    ND_LT,       /* <  有符号/无符号按 is_unsigned */
+    ND_LE,       /* <= */
+    ND_GT,       /* >  */
+    ND_GE,       /* >= */
     ND_LOGAND,   /* && 短路 */
     ND_LOGOR,    /* || 短路 */
     ND_NOT,      /* !  一元 */
@@ -102,10 +124,14 @@ enum {
     ND_WHILE,    /* lhs = 条件，rhs = 循环体 */
     ND_FOR,      /* lhs = init（可空），rhs = 条件（可空），els = inc（可空），body = 循环体 */
     ND_GVAR,     /* 全局变量：name = 全局名（label 即名字） */
-    ND_CALL,     /* 函数调用：name = 函数名，rhs = 实参链表，val = 实参数 */
+    ND_FUNC,     /* 函数名表达式：name = 函数名（结果 = 函数地址） */
+    ND_CALL,     /* 函数调用：name = 函数名（NULL = 动态调用，lhs = 函数指针表达式），rhs = 实参链表，val = 实参数 */
     ND_STR,      /* 字符串字面量：val = 字符串编号（数据段 label s%d） */
     ND_ADDR,     /* 一元 &：lhs = 变量（结果 = 地址） */
     ND_DEREF,    /* 一元 *：lhs = 指针表达式（结果 = 指向值） */
+    ND_MEMBER,   /* 成员访问：lhs = 聚合对象（求地址），val = 成员字节偏移；bit_offset/bit_width 位域 */
+    ND_CAST,     /* 类型转换：lhs = 表达式，ty = 目标类型 */
+    ND_BITNOT,   /* 一元 ~ */
 };
 
 typedef struct Node {
@@ -117,20 +143,29 @@ typedef struct Node {
     struct Node *body;   /* for 循环体 */
     Token *tok;    /* 生成诊断与代码注释用 */
     Type *ty;      /* 表达式/语句类型 */
-    int64_t val;   /* ND_NUM / ND_CALL 实参数 / ND_STR 编号 */
+    int64_t val;   /* ND_NUM / ND_CALL 实参数 / ND_STR 编号 / ND_MEMBER 字节偏移 */
     int offset;    /* ND_VAR：相对 sp 的负偏移 */
-    char *name;    /* ND_GVAR / ND_CALL：标识符名（malloc） */
+    int bit_offset;  /* ND_MEMBER 位域（-1 = 非位域） */
+    int bit_width;   /* ND_MEMBER 位域宽度（-1 = 非位域） */
+    char *name;    /* ND_GVAR / ND_CALL：标识符名（malloc；ND_CALL 动态调用为 NULL） */
 } Node;
 
-/* 函数定义 */
+/* 函数定义/原型 */
 typedef struct Func {
     struct Func *next;
     char *name;
     int len;
     Type *ret_ty;    /* 返回类型（TY_VOID = void） */
+    Type *fty;       /* TY_FUNC 类型（函数名表达式/函数指针用） */
     int nargs;       /* 参数个数 */
+    Type *param_tys[64];    /* 参数类型（数组形参已退化指针） */
+    char *param_names[64];  /* 参数名（定义时；原型可为 NULL） */
     int frame_size;  /* 帧大小（局部变量 + 参数栈槽） */
-    Node *body;      /* 语句链表 */
+    Node *body;      /* 语句链表（NULL = 仅原型） */
+    bool is_knr;       /* K&R 旧式（参数未声明/未知；调用不检查个数） */
+    bool is_variadic;  /* 原型含 "..." */
+    bool is_decl;      /* 仅原型声明（可被定义覆盖） */
+    bool is_static;    /* static 函数（不导出符号，Task 5 消费） */
 } Func;
 
 /* 全局变量声明 */
@@ -139,7 +174,18 @@ typedef struct Global {
     char *name;
     int len;
     Type *ty;
-    int64_t init_val;   /* 初值（M1 常量） */
+    unsigned char *init_data;  /* 初始化字节（大端布局）；NULL = 未初始化 */
+    int init_data_len;
+    bool is_static;    /* 不导出符号（Task 5 消费） */
+    bool is_extern;    /* extern 声明：引用外部定义，不分配数据 */
+    /* 初始化器中的字符串引用（4 字节槽 → 数据段字符串 label @s%d）。
+     * 交错数组：str_relocs[2k] = 槽偏移（4 对齐），str_relocs[2k+1] = 字符串编号 */
+    int *str_relocs;
+    int n_str_relocs;  /* reloc 对数 */
+    /* 初始化器中的函数地址引用（4 字节槽 → 函数 label @name）。 */
+    char *func_reloc_names[64];   /* 函数名 */
+    int func_reloc_offsets[64];   /* 槽偏移（4 对齐） */
+    int n_func_relocs;            /* reloc 数 */
 } Global;
 
 /* 程序 = 全局变量 + 函数 + 字符串 */

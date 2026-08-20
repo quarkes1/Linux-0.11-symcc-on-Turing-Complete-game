@@ -45,14 +45,26 @@ static bool is_punct1(char c) {
     return c == '+' || c == '-' || c == '*' || c == '/' || c == '%' ||
            c == '(' || c == ')' ||
            c == '{' || c == '}' || c == '=' || c == ';' || c == ',' ||
+           c == '[' || c == ']' ||
            c == '<' || c == '>' || c == '!' || c == '&' ||
            c == '#' || c == '?' || c == ':' || c == '^' || c == '~' ||
            c == '|' || c == '.';
 }
 
+/* 三字符运算符（<<= >>= ...；按最长匹配优先） */
+static bool is_punct3(const char *p) {
+    static const char *ops[] = { "<<=", ">>=", "..." };
+    for (size_t i = 0; i < sizeof ops / sizeof ops[0]; i++)
+        if (p[0] == ops[i][0] && p[1] == ops[i][1] && p[2] == ops[i][2])
+            return true;
+    return false;
+}
+
 /* 双字符运算符（按最长匹配优先） */
 static bool is_punct2(const char *p) {
-    static const char *ops[] = { "==", "!=", "<=", ">=", "&&", "||", "##" };
+    static const char *ops[] = { "==", "!=", "<=", ">=", "&&", "||", "##",
+                                 "<<", ">>", "+=", "-=", "*=", "/=", "%=",
+                                 "&=", "|=", "^=", "++", "--", "->" };
     for (size_t i = 0; i < sizeof ops / sizeof ops[0]; i++)
         if (p[0] == ops[i][0] && p[1] == ops[i][1])
             return true;
@@ -60,7 +72,57 @@ static bool is_punct2(const char *p) {
 }
 
 /* 关键字表（识别靠词边界） */
-static const char *keywords[] = { "return", "int", "char", "unsigned", "void", "if", "else", "while", "for" };
+static const char *keywords[] = {
+    "return", "int", "char", "unsigned", "void", "if", "else", "while", "for",
+    "typedef", "enum", "struct", "union", "static", "extern", "const",
+    "volatile", "register", "inline", "sizeof", "break", "continue",
+    "do", "switch", "case", "default", "goto",
+};
+
+/* 解析转义序列（'\\' 已消费）；返回字节值，*pp 指向转义后的下一字符。
+ * 支持 \n \t \r \v \f \a \b \\ \' \" \? \xHH \OOO；未知转义保留
+ * 字面量（返回 '\\' 且只消费一个字符——Windows 路径等安全通过）。 */
+static int get_escape(const char **pp) {
+    const char *p = *pp;
+    switch (*p) {
+    case 'n': (*pp)++; return '\n';
+    case 't': (*pp)++; return '\t';
+    case 'r': (*pp)++; return '\r';
+    case 'v': (*pp)++; return '\v';
+    case 'f': (*pp)++; return '\f';
+    case 'a': (*pp)++; return '\a';
+    case 'b': (*pp)++; return '\b';
+    case '\\': (*pp)++; return '\\';
+    case '"': (*pp)++; return '"';
+    case '\'': (*pp)++; return '\'';
+    case '?': (*pp)++; return '?';
+    case '0': case '1': case '2': case '3':
+    case '4': case '5': case '6': case '7': {
+        int val = 0, n = 0;
+        while (n < 3 && *p >= '0' && *p <= '7') { val = val * 8 + (*p - '0'); p++; n++; }
+        *pp = p;
+        return val & 0xFF;
+    }
+    case 'x': {
+        p++;
+        if (!isxdigit((unsigned char)*p)) { (*pp) = p; return 'x'; }
+        int val = 0;
+        while (isxdigit((unsigned char)*p)) {
+            int d;
+            if (*p >= '0' && *p <= '9') d = *p - '0';
+            else if (*p >= 'a' && *p <= 'f') d = *p - 'a' + 10;
+            else d = *p - 'A' + 10;
+            val = val * 16 + d;
+            p++;
+        }
+        *pp = p;
+        return val & 0xFF;
+    }
+    default:
+        (*pp)++;
+        return '\\';   /* 未知转义：保留反斜杠（后续字符按普通字符读入） */
+    }
+}
 
 Token *tokenize(const char *p) {
     Token head = {0};
@@ -153,7 +215,14 @@ Token *tokenize(const char *p) {
             continue;
         }
 
-        /* 标点：双字符优先（== != <= >= && || ##），再单字符 */
+        /* 标点：三字符（<<= >>= ...）→ 双字符 → 单字符 */
+        if (is_punct3(p)) {
+            cur = cur->next = new_token(TK_PUNCT, (char *)p, (char *)p + 3);
+            cur->at_bol = bol;
+            bol = false;
+            p += 3;
+            continue;
+        }
         if (is_punct2(p)) {
             cur = cur->next = new_token(TK_PUNCT, (char *)p, (char *)p + 2);
             cur->at_bol = bol;
@@ -169,7 +238,7 @@ Token *tokenize(const char *p) {
             continue;
         }
 
-        /* 字符串字面量 "..."（支持 \n \t \\ \" \0 转义，展开后存入 t->str） */
+        /* 字符串字面量 "..."（完整 C89 转义表，展开后存入 t->str） */
         if (*p == '"') {
             char *start = (char *)p;
             size_t cap = strcspn(p + 1, "\"") + 1;   /* 上限：源文本长度 */
@@ -179,22 +248,7 @@ Token *tokenize(const char *p) {
             while (*p && *p != '"') {
                 if (*p == '\\') {
                     p++;
-                    switch (*p) {
-                    case 'n': buf[blen++] = '\n'; break;
-                    case 't': buf[blen++] = '\t'; break;
-                    case '\\': buf[blen++] = '\\'; break;
-                    case '"': buf[blen++] = '"'; break;
-                    case '0': buf[blen++] = '\0'; break;
-                    default:
-                        /* 未识别转义原样保留（不报错）：Windows 反斜杠
-                         * include 路径 "dir\file.h" 会在这里出现，且
-                         * \f \r \v 等合法 C89 转义未在表中。原始路径
-                         * 字节由 preprocess.c 按 loc 原文切片取得。 */
-                        buf[blen++] = '\\';
-                        buf[blen++] = *p;
-                        break;
-                    }
-                    p++;
+                    buf[blen++] = get_escape(&p);
                 } else {
                     buf[blen++] = *p++;
                 }
@@ -213,24 +267,14 @@ Token *tokenize(const char *p) {
             continue;
         }
 
-        /* 单字符字面量 'A'（支持 \n \t \\ \' \0 转义） */
+        /* 单字符字面量 'A'（完整 C89 转义表） */
         if (*p == '\'') {
             char *start = (char *)p;
             p++;
             int64_t val;
             if (*p == '\\') {
                 p++;
-                switch (*p) {
-                case 'n': val = '\n'; break;
-                case 't': val = '\t'; break;
-                case '\\': val = '\\'; break;
-                case '\'': val = '\''; break;
-                case '0': val = '\0'; break;
-                default:
-                    fprintf(stderr, "bad escape: '\\%c'\n", *p);
-                    exit(1);
-                }
-                p++;
+                val = get_escape(&p);
             } else {
                 val = (unsigned char)*p;
                 p++;

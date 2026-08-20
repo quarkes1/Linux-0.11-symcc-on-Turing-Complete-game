@@ -92,8 +92,8 @@ const Insn isa_table[] = {
       {{REG(16), IMM(0), NONE}}, 2 },
 
     /* ---------- 跳转（12） ---------- */
-    { "jmp", 1, {0x480F0000}, {0xFFFFF0FF},       /* jmp %a(reg) */
-      {{REG(20), NONE, NONE}}, 1 },
+    { "jmp", 1, {0x480F0000}, {0xFFFF0FFF},       /* jmp %a(reg)：reg@11-8 */
+      {{REG(8), NONE, NONE}}, 1 },
     { "jmp", 1, {0x580F0000}, {0xFFFF0000},       /* jmp %a(imm) */
       {{IMM(0), NONE, NONE}}, 1 },
     { "je",   1, {0x510F0000}, {0xFFFF0000}, {{IMM(0), NONE, NONE}}, 1 },
