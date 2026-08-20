@@ -12,6 +12,8 @@
 #include <stdint.h>
 #include <stdio.h>
 
+#include "obj.h"
+
 /* ---------- 词法 ---------- */
 
 enum {
@@ -218,8 +220,9 @@ Program *parse(Token *tok);
 
 /* ---------- 代码生成 ---------- */
 
-/* 输出 SymphonyPlus 汇编文本到 out；imm 超出 16 位报错并返回 false */
-bool codegen(Program *prog, FILE *out);
+/* 生成可重定位对象（符号引用形态：@name D16 / @hi:@lo D32 / call J16）；
+ * d32 = 数据引用拆 32 位（mov @hi + lsl + or @lo）。布局由链接器完成 */
+bool codegen(Program *prog, Obj *obj, bool d32);
 
 /* ---------- 编译入口（main.c 与测试运行器共用） ---------- */
 

@@ -2152,7 +2152,7 @@ static Node *stmt(void) {
 /* ---------- 函数与全局 ---------- */
 
 /* 注册函数定义体（覆盖 is_decl 原型；重复定义报错） */
-static Func *funcdef(Type *fty, Token *t) {
+static Func *funcdef(Type *fty, Token *t, bool is_static) {
     Func *f = find_func(t);
     if (!f) {
         f = (Func *)calloc(1, sizeof(Func));
@@ -2165,6 +2165,7 @@ static Func *funcdef(Type *fty, Token *t) {
         error_at(t, "duplicate function definition");
     }
     f->is_decl = false;
+    f->is_static = f->is_static || is_static;
     f->ret_ty = fty->base;
     f->fty = fty;
     f->nargs = fty->nargs;
@@ -2280,10 +2281,11 @@ static Func *funcdef(Type *fty, Token *t) {
 }
 
 /* 原型注册：已定义 → 忽略；已声明 → 覆盖；新 → 注册 */
-static void register_proto(Type *fty, Token *t) {
+static void register_proto(Type *fty, Token *t, bool is_static) {
     Func *f = find_func(t);
     if (f) {
         if (f->is_decl) {
+            f->is_static = f->is_static || is_static;
             f->ret_ty = fty->base;
             f->fty = fty;
             f->nargs = fty->nargs;
@@ -2307,6 +2309,7 @@ static void register_proto(Type *fty, Token *t) {
     f->is_variadic = fty->is_variadic;
     f->is_knr = fty->is_knr;
     f->is_decl = true;
+    f->is_static = is_static;
     for (int i = 0; i < fty->nargs; i++) {
         f->param_tys[i] = fty->param_tys[i];
         f->param_names[i] = fty->param_names[i];
@@ -2622,17 +2625,19 @@ Program *parse(Token *toks) {
         }
 
         Token *name = NULL;
+        /* 参数类型解析会重置 decl_is_* → 函数 static 先捕获 */
+        bool fn_static = decl_is_static;
         Type *ty = declarator(base, &name);
 
         if (ty->kind == TY_FUNC) {
             /* 函数定义或原型 */
             if (tok_is(tok, "{")) {
-                funcdef(ty, name);
+                funcdef(ty, name, fn_static);
             } else {
                 if (!tok_is(tok, ";"))
                     error_at(tok, "expected ';' after function declaration");
                 tok = tok->next;
-                register_proto(ty, name);
+                register_proto(ty, name, fn_static);
             }
             continue;
         }
@@ -2696,10 +2701,8 @@ Program *parse(Token *toks) {
                 g->init_data_len = ty->size;
                 init_bytes(&tok, tok, ty, g->init_data, ty->size, g);
             } else if (!g->is_extern) {
-                /* 未初始化全局：数据段清零（M1 行为；bss 迁移在 Task 5） */
-                g->init_data = (unsigned char *)calloc(1, (size_t)ty->size);
-                if (!g->init_data) { fprintf(stderr, "out of memory\n"); exit(1); }
-                g->init_data_len = ty->size;
+                /* 未初始化全局：init_data 留 NULL → codegen 归入 .bss
+                 * （链接器清零分配；Task 5 起不再占对象数据段） */
             }
         skip_global:
             if (tok_is(tok, ",")) {
