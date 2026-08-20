@@ -704,14 +704,163 @@ static int64_t eval_or(Eval *c) {
     return v;
 }
 
+/* ---------- 跳过模式（?: 的未取分支用） ----------
+ * 只按运算符优先级/括号结构消费 token，不计算、不报解析错误：
+ * 未取分支里可以有求值器算不了的 token 组合（如孤立的 '('）。 */
+
+static void skip_expr(Eval *c);
+
+static void skip_primary(Eval *c) {
+    if (at_end(c))
+        return;
+    Token *t = c->cur;
+    if (tok_is(t, "(")) {
+        c->cur = t->next;
+        int depth = 1;
+        while (!at_end(c)) {
+            Token *u = c->cur;
+            if (tok_is(u, "(")) {
+                depth++;
+                c->cur = u->next;
+            } else if (tok_is(u, ")")) {
+                depth--;
+                c->cur = u->next;
+                if (depth == 0)
+                    return;
+            } else if (tok_is(u, ":") && depth == 1) {
+                /* 未闭合 '(' 内遇顶层 ':'：括号组提前结束，让上层
+                 * expect(':') 能找到它（如 #if 0 ? ( : 4）。 */
+                return;
+            } else {
+                c->cur = u->next;
+            }
+        }
+        return;
+    }
+    c->cur = t->next;   /* 单个 token（数字/标识符/运算符符号）直接跳过 */
+}
+
+static void skip_unary(Eval *c) {
+    if (!at_end(c) &&
+        (tok_is(c->cur, "+") || tok_is(c->cur, "-") ||
+         tok_is(c->cur, "~") || tok_is(c->cur, "!"))) {
+        c->cur = c->cur->next;
+        skip_unary(c);
+        return;
+    }
+    skip_primary(c);
+}
+
+static void skip_mul(Eval *c) {
+    skip_unary(c);
+    while (!at_end(c) &&
+           (tok_is(c->cur, "*") || tok_is(c->cur, "/") || tok_is(c->cur, "%"))) {
+        c->cur = c->cur->next;
+        skip_unary(c);
+    }
+}
+
+static void skip_add(Eval *c) {
+    skip_mul(c);
+    while (!at_end(c) && (tok_is(c->cur, "+") || tok_is(c->cur, "-"))) {
+        c->cur = c->cur->next;
+        skip_mul(c);
+    }
+}
+
+static void skip_shift(Eval *c) {
+    skip_add(c);
+    while (!at_end(c) && (tok_is(c->cur, "<<") || tok_is(c->cur, ">>"))) {
+        c->cur = c->cur->next;
+        skip_add(c);
+    }
+}
+
+static void skip_rel(Eval *c) {
+    skip_shift(c);
+    while (!at_end(c) &&
+           (tok_is(c->cur, "<") || tok_is(c->cur, "<=") ||
+            tok_is(c->cur, ">") || tok_is(c->cur, ">="))) {
+        c->cur = c->cur->next;
+        skip_shift(c);
+    }
+}
+
+static void skip_eq(Eval *c) {
+    skip_rel(c);
+    while (!at_end(c) && (tok_is(c->cur, "==") || tok_is(c->cur, "!="))) {
+        c->cur = c->cur->next;
+        skip_rel(c);
+    }
+}
+
+static void skip_bitand(Eval *c) {
+    skip_eq(c);
+    while (!at_end(c) && tok_is(c->cur, "&")) {
+        c->cur = c->cur->next;
+        skip_eq(c);
+    }
+}
+
+static void skip_bitxor(Eval *c) {
+    skip_bitand(c);
+    while (!at_end(c) && tok_is(c->cur, "^")) {
+        c->cur = c->cur->next;
+        skip_bitand(c);
+    }
+}
+
+static void skip_bitor(Eval *c) {
+    skip_bitxor(c);
+    while (!at_end(c) && tok_is(c->cur, "|")) {
+        c->cur = c->cur->next;
+        skip_bitxor(c);
+    }
+}
+
+static void skip_and(Eval *c) {
+    skip_bitor(c);
+    while (!at_end(c) && tok_is(c->cur, "&&")) {
+        c->cur = c->cur->next;
+        skip_bitor(c);
+    }
+}
+
+static void skip_or(Eval *c) {
+    skip_and(c);
+    while (!at_end(c) && tok_is(c->cur, "||")) {
+        c->cur = c->cur->next;
+        skip_and(c);
+    }
+}
+
+static void skip_expr(Eval *c) {
+    skip_or(c);
+    if (!at_end(c) && tok_is(c->cur, "?")) {
+        c->cur = c->cur->next;
+        skip_expr(c);                 /* then 分支结构 */
+        if (at_end(c) || !tok_is(c->cur, ":"))
+            return;                   /* 跳过模式宽容：缺 ':' 不报错 */
+        c->cur = c->cur->next;
+        skip_expr(c);                 /* else 分支结构 */
+    }
+}
+
+/* ?: 短路（brief 要求）：条件为真只算 then，为假只算 else；未取分支
+ * 用跳过模式消费（结构照常匹配，但不求值、不报解析错误）。 */
 static int64_t eval_expr(Eval *c) {
     int64_t v = eval_or(c);
     if (!at_end(c) && tok_is(c->cur, "?")) {
         c->cur = c->cur->next;
-        int64_t then = eval_expr(c);
+        if (v) {
+            int64_t then = eval_expr(c);
+            expect(c, ":");
+            skip_expr(c);
+            return then;
+        }
+        skip_expr(c);
         expect(c, ":");
-        int64_t els = eval_expr(c);
-        return v ? then : els;
+        return eval_expr(c);
     }
     return v;
 }
@@ -925,8 +1074,18 @@ static Token *do_include(Token *t, const char *src_name,
     const char *fname;
     int flen;
     if (t->kind == TK_STR) {
-        fname = t->str;
-        flen = t->str_len;
+        /* 用引号之间的原文切片做路径，不经 tokenize 的转义解码：
+         * Windows 反斜杠路径 "dir\file.h" 保持逐字节原样（tokenize
+         * 对未识别转义已宽容处理不再报错，但解码字节仍会改写 \t \n 等）。
+         * TK_STR 的 loc 覆盖含引号的原文，直接切片。
+         * 普通字符串字面量不受影响——只有 include 路径查找改走原文。 */
+        if (t->len >= 2) {
+            fname = t->loc + 1;
+            flen = t->len - 2;
+        } else {
+            fname = t->str;
+            flen = t->str_len;
+        }
     } else if (tok_is(t, "<")) {
         angle = true;
         Token *gt = t->next;
@@ -1169,6 +1328,11 @@ static Token *pp_tokens(Token *tok, const char *src_name,
             append_list(&out, &out2, e);
         }
         t = tail->next;
+    }
+    if (top_level && cond_depth != 0) {
+        /* 顶层文件读完仍有未闭合的条件组（gcc 会警告/报错） */
+        fprintf(stderr, "unterminated #if (missing #endif)\n");
+        exit(1);
     }
     append1(&out, &out2, tok_dup(t));   /* 结尾 EOF token */
     return head.next;

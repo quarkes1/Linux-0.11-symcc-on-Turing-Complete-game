@@ -186,8 +186,13 @@ Token *tokenize(const char *p) {
                     case '"': buf[blen++] = '"'; break;
                     case '0': buf[blen++] = '\0'; break;
                     default:
-                        fprintf(stderr, "bad escape: '\\%c'\n", *p);
-                        exit(1);
+                        /* 未识别转义原样保留（不报错）：Windows 反斜杠
+                         * include 路径 "dir\file.h" 会在这里出现，且
+                         * \f \r \v 等合法 C89 转义未在表中。原始路径
+                         * 字节由 preprocess.c 按 loc 原文切片取得。 */
+                        buf[blen++] = '\\';
+                        buf[blen++] = *p;
+                        break;
                     }
                     p++;
                 } else {

@@ -111,6 +111,28 @@ static void test_skipped_if_no_eval(void) {
     free(out);
 }
 
+/* ?: 短路：只计算取中的分支；未取分支里可以有求值器算不了的
+ * token 组合（孤立的 '('）而不得报错。 */
+static void test_ternary_shortcircuit(void) {
+    /* 条件真 → 取 then；未取 else 含 '(',不得报错 */
+    char *out = pp("#if 1 ? 3 : (\nint ok1;\n#endif\n");
+    CHECK(strstr(out, "int ok1"));
+    free(out);
+    /* 条件假 → 取 else（=4）；未取 then 含 '(',不得报错 */
+    out = pp("#if 0 ? ( : 4\nint ok2;\n#endif\n");
+    CHECK(strstr(out, "int ok2"));
+    free(out);
+    /* 条件假 → 整体为假：分支内容不输出 */
+    out = pp("#if 0 ? 9 : 0\nint bad3;\n#endif\nint ok3;\n");
+    CHECK(!strstr(out, "bad3"));
+    CHECK(strstr(out, "int ok3 ;"));
+    free(out);
+    /* 嵌套 ?: 的正常求值（都取中分支） */
+    out = pp("#if 1 ? 1 ? 3 : 4 : 5\nint ok4;\n#endif\n");
+    CHECK(strstr(out, "int ok4"));
+    free(out);
+}
+
 /* #pragma 整行无操作；#error 在被跳过时忽略（取中分支的 #error 退出
  * 进程，无法在进程内测试——见 report 的驱动验证）。 */
 static void test_pragma_error(void) {
@@ -132,6 +154,7 @@ int main(void) {
     test_defined_op();      test_stringize();       test_paste();
     test_line_continuation(); test_undef();         test_cmdline_defines();
     test_comments_removed(); test_skipped_if_no_eval(); test_pragma_error();
+    test_ternary_shortcircuit();
     printf("preproc_test: %d passed, %d failed\n", npass, nfail);
     return nfail ? 1 : 0;
 }
