@@ -45,6 +45,14 @@ Type *ty_ptr(Type *base) {
     return t;
 }
 
+/* 无符号 int 类型（单例副本：不污染 ty_int） */
+static Type *ty_uint(void) {
+    static Type t;
+    t = *ty_int;
+    t.is_unsigned = true;
+    return &t;
+}
+
 /* 局部变量符号表（链表，每个函数独立） */
 typedef struct Var {
     struct Var *next;
@@ -92,13 +100,19 @@ static Node *new_binary(int kind, Node *lhs, Node *rhs, Token *t) {
 }
 
 /* 二元运算：默认 int 类型；指针算术 p+n/p-n 结果为指针类型
- * （p-q 两个指针相减 → int，即元素个数差） */
+ * （p-q 两个指针相减 → int，即元素个数差）；
+ * 算术运算（含 / %）任一侧 unsigned → 结果为 unsigned（C 语义） */
 static Node *new_binop(int kind, Node *lhs, Node *rhs, Token *t) {
     Node *n = new_binary(kind, lhs, rhs, t);
     n->ty = ty_int;
     if ((kind == ND_ADD || kind == ND_SUB) &&
-        lhs->ty->kind == TY_PTR && rhs->ty->kind != TY_PTR)
+        lhs->ty->kind == TY_PTR && rhs->ty->kind != TY_PTR) {
         n->ty = lhs->ty;
+    } else if ((kind == ND_ADD || kind == ND_SUB || kind == ND_MUL ||
+                kind == ND_DIV || kind == ND_MOD) &&
+               (lhs->ty->is_unsigned || rhs->ty->is_unsigned)) {
+        n->ty = ty_uint();
+    }
     return n;
 }
 
@@ -115,8 +129,10 @@ static Type *declspec(void) {
         tok = tok->next;
         return ty_void;
     }
-    if (tok_is_kw(tok, "int")) {
-        tok = tok->next;
+    if (tok_is_kw(tok, "int") || (is_unsigned && tok->kind == TK_IDENT)) {
+        /* unsigned 后无 int/char → 缺省 unsigned int */
+        if (tok_is_kw(tok, "int"))
+            tok = tok->next;
         if (is_unsigned) {
             Type *t = (Type *)calloc(1, sizeof(Type));
             if (!t) { fprintf(stderr, "out of memory\n"); exit(1); }
@@ -173,7 +189,7 @@ static Node *primary(void) {
     if (tok->kind == TK_NUM) {
         Node *n = new_node(ND_NUM, tok);
         n->val = tok->val;
-        n->ty = ty_int;
+        n->ty = tok->is_unsigned ? ty_uint() : ty_int;
         tok = tok->next;
         return n;
     }
@@ -283,15 +299,26 @@ static Node *unary(void) {
     return primary();
 }
 
-/* mul = unary ("*" unary)* */
+/* mul = unary (("*" | "/" | "%") unary)* */
 static Node *mul(void) {
     Node *n = unary();
-    while (tok_is(tok, "*")) {
-        Token *t = tok;
-        tok = tok->next;
-        n = new_binop(ND_MUL, n, unary(), t);
+    for (;;) {
+        if (tok_is(tok, "*")) {
+            Token *t = tok;
+            tok = tok->next;
+            n = new_binop(ND_MUL, n, unary(), t);
+        } else if (tok_is(tok, "/")) {
+            Token *t = tok;
+            tok = tok->next;
+            n = new_binop(ND_DIV, n, unary(), t);
+        } else if (tok_is(tok, "%")) {
+            Token *t = tok;
+            tok = tok->next;
+            n = new_binop(ND_MOD, n, unary(), t);
+        } else {
+            return n;
+        }
     }
-    return n;
 }
 
 /* additive = mul ("+" mul | "-" mul)* */
@@ -525,17 +552,23 @@ static Node *stmt(void) {
 
 /* ---------- 函数与全局 ---------- */
 
-/* funcdef = ("int" | "void") ident "(" params ")" "{" stmt* "}" */
-static Func *funcdef(Type *ret_ty, Token *t) {
-    Func *f = (Func *)calloc(1, sizeof(Func));
-    if (!f) { fprintf(stderr, "out of memory\n"); exit(1); }
-    f->name = xstrndup(t->loc, (size_t)t->len);
-    f->len = t->len;
-    f->ret_ty = ret_ty;
+/* 查找已注册函数（pre_scan 注册） */
+static Func *find_func(Token *t) {
+    for (Func *f = funcs; f; f = f->next)
+        if (f->len == t->len && strncmp(f->name, t->loc, (size_t)t->len) == 0)
+            return f;
+    return NULL;
+}
 
-    /* 先注册再解析函数体：允许自递归/互递归调用 */
-    f->next = funcs;
-    funcs = f;
+/* funcdef = ("int" | "void") ident "(" params ")" "{" stmt* "}"
+ * 函数已在 pre_scan 注册（跨文件/前向引用/重复检测），这里填充其余字段。 */
+static Func *funcdef(Type *ret_ty, Token *t) {
+    Func *f = find_func(t);
+    if (!f) {
+        fprintf(stderr, "internal error: funcdef for unregistered function\n");
+        exit(1);
+    }
+    f->ret_ty = ret_ty;
 
     /* 本函数新的局部符号表与帧累计 */
     vars = NULL;
@@ -592,6 +625,41 @@ static Func *funcdef(Type *ret_ty, Token *t) {
     return f;
 }
 
+/* 预扫描：先注册全部函数定义（名字 + 返回类型）。
+ * 用途：① 跨文件多文件编译（文件顺序无关）；② 允许前向/互递归调用；
+ * ③ 重复定义检测（同一函数在第二个文件再定义 → 报错）。
+ * 规则：类型关键字后跟 declarator 再接 "(" 即为函数定义。类型关键字
+ * 不可能用作标识符，因此扫描时命中类型关键字即可安全尝试匹配。 */
+static void pre_scan_functions(void) {
+    Token *saved = tok;
+    for (Token *p = tok; p->kind != TK_EOF; p = p->next) {
+        if (p->kind != TK_KEYWORD ||
+            !(tok_is(p, "int") || tok_is(p, "char") ||
+              tok_is(p, "unsigned") || tok_is(p, "void")))
+            continue;
+        tok = p;
+        Type *base = declspec();
+        if (tok_is(tok, ")") && base == ty_void) {
+            /* 裸 void 参数（void f(void) 中括号内的 void） */
+            continue;
+        }
+        Token *name;
+        Type *ty = declarator(base, &name);
+        if (!tok_is(tok, "("))
+            continue;                          /* 变量声明，跳过 */
+        if (find_func(name))
+            error_at(name, "duplicate function definition");
+        Func *f = (Func *)calloc(1, sizeof(Func));
+        if (!f) { fprintf(stderr, "out of memory\n"); exit(1); }
+        f->name = xstrndup(name->loc, (size_t)name->len);
+        f->len = name->len;
+        f->ret_ty = ty;
+        f->next = funcs;
+        funcs = f;
+    }
+    tok = saved;
+}
+
 /* program = (funcdef | global)* */
 Program *parse(Token *toks) {
     tok = toks;
@@ -609,6 +677,8 @@ Program *parse(Token *toks) {
     ty_void->kind = TY_VOID;
     str_head = NULL;
     str_tail = &str_head;
+
+    pre_scan_functions();
 
     Program *prog = (Program *)calloc(1, sizeof(Program));
     if (!prog) { fprintf(stderr, "out of memory\n"); exit(1); }
@@ -628,6 +698,12 @@ Program *parse(Token *toks) {
             /* 全局变量声明：declspec declarator (= num)? ; */
             if (ty->kind == TY_VOID)
                 error_at(tok, "'void' cannot declare a variable");
+            /* 跨文件合并：全局重名、或与函数重名 → 报错 */
+            for (Global *x = globals; x; x = x->next)
+                if (x->len == name->len && strncmp(x->name, name->loc, (size_t)name->len) == 0)
+                    error_at(name, "duplicate global variable");
+            if (find_func(name))
+                error_at(name, "global name conflicts with function");
             Global *g = (Global *)calloc(1, sizeof(Global));
             if (!g) { fprintf(stderr, "out of memory\n"); exit(1); }
             g->name = xstrndup(name->loc, (size_t)name->len);

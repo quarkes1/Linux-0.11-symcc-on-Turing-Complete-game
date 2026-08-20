@@ -15,7 +15,7 @@ all: emu/asm.exe emu/emu.exe tests/asm_test.exe tests/emu_test.exe symcc/symcc.e
 symcc/symcc.exe: $(SYMCC_SRC) symcc/src/symcc.h
 	$(CC) $(CFLAGS) -o $@ $(SYMCC_SRC)
 
-tests/run_tests.exe: tests/run_tests.c $(EMU_SRC) $(EMU_HDR) $(SYMCC_LIB) symcc/src/symcc.h
+tests/run_tests.exe: tests/run_tests.c $(EMU_SRC) $(EMU_HDR) $(SYMCC_LIB) symcc/src/symcc.h runtime/divsi3.c
 	$(CC) $(CFLAGS) -o $@ tests/run_tests.c $(EMU_SRC) $(SYMCC_LIB)
 
 emu/asm.exe: emu/asm_main.c $(EMU_SRC) $(EMU_HDR)

@@ -31,6 +31,7 @@ typedef struct Token {
     int len;         /* 长度 */
     char *str;       /* TK_STR：展开后的字节（malloc，无 NUL 结尾） */
     int str_len;     /* TK_STR 字节数 */
+    bool is_unsigned; /* TK_NUM：u/U 后缀 */
 } Token;
 
 Token *tokenize(const char *p);
@@ -59,6 +60,8 @@ enum {
     ND_ADD,
     ND_SUB,
     ND_MUL,
+    ND_DIV,      /* / 有符号调用 __divsi3，无符号直接 div */
+    ND_MOD,      /* % 有符号调用 __modsi3，无符号直接 mod */
     ND_NEG,
     ND_VAR,      /* 表达式：读局部变量（offset 相对 sp，负值） */
     ND_ASSIGN,   /* lhs = 变量节点，rhs = 表达式 */

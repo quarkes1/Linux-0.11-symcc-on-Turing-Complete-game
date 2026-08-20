@@ -38,7 +38,8 @@ int64_t tok_num(const Token *t) {
 }
 
 static bool is_punct1(char c) {
-    return c == '+' || c == '-' || c == '*' || c == '(' || c == ')' ||
+    return c == '+' || c == '-' || c == '*' || c == '/' || c == '%' ||
+           c == '(' || c == ')' ||
            c == '{' || c == '}' || c == '=' || c == ';' || c == ',' ||
            c == '<' || c == '>' || c == '!' || c == '&';
 }
@@ -106,13 +107,18 @@ Token *tokenize(const char *p) {
                     p++;
                 }
             }
+            /* u/U 后缀 → unsigned 字面量 */
+            bool unsuf = (*p == 'u' || *p == 'U');
+            if (unsuf)
+                p++;
             if (!isalnum((unsigned char)*p) && *p != '_') {
                 Token *t = new_token(TK_NUM, start, (char *)p);
                 t->val = val;
+                t->is_unsigned = unsuf;
                 cur = cur->next = t;
                 continue;
             }
-            /* 数字后紧跟字母：非法（如 123abc） */
+            /* 数字后紧跟字母：非法（如 123abc、123ub） */
             fprintf(stderr, "invalid number: %s\n", start);
             exit(1);
         }

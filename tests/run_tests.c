@@ -27,11 +27,23 @@ static void compile_and_run(const char *c_file, int expected_exit,
     FILE *fp;
     size_t tlen;
 
-    (void)extra_file;   /* Task 8 多文件编译时启用 */
-
+    /* 多文件：先读额外文件（runtime 等），再读被测文件。
+     * 顺序要求：被调函数先定义（M1 单遍；symcc.exe 多文件同样按
+     * 命令行顺序拼接）。 */
+    tlen = 0;
+    if (extra_file[0]) {
+        fp = fopen(extra_file, "rb");
+        assert(fp != NULL);
+        tlen = fread(text, 1, sizeof text - 1, fp);
+        fclose(fp);
+        if (tlen >= sizeof text - 2) {
+            fprintf(stderr, "text buffer overflow (%s)\n", extra_file);
+            exit(1);
+        }
+    }
     fp = fopen(c_file, "rb");
     assert(fp != NULL);
-    tlen = fread(text, 1, sizeof text - 1, fp);
+    tlen += fread(text + tlen, 1, sizeof text - 1 - tlen, fp);
     fclose(fp);
     text[tlen] = 0;
 
@@ -63,6 +75,8 @@ int main(void) {
     compile_and_run("tests/test_fun.c", 162, NULL, 0, "");
     compile_and_run("tests/test_ptr.c", 15, NULL, 0, "");
     compile_and_run("tests/test_char.c", 66, NULL, 0, "");
+    compile_and_run("tests/test_div.c", 1, NULL, 0, "runtime/divsi3.c");
+    compile_and_run("tests/test_udiv.c", 1, NULL, 0, "runtime/divsi3.c");
     printf("ALL TESTS PASSED\n");
     return 0;
 }

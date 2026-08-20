@@ -1,8 +1,11 @@
 /* symcc/src/main.c — 编译器入口
  *
- * 用法: symcc.exe <file.c> [-o out.asm]
- * 流程: 读取源码 → tokenize → parse → codegen → 输出 .asm（文本）
+ * 用法: symcc.exe file1.c [file2.c ...] [-o out.asm]
+ * 流程: 读取全部源文件（按命令行顺序拼接）→ tokenize → parse →
+ *       codegen → 输出 .asm（文本）
  * 后续由游戏汇编器（或本地 emu/asm.exe）汇编为二进制。
+ * 多文件：函数已由预扫描统一注册（见 parse.c pre_scan_functions），
+ * 因此被调函数可写在调用方之后（如 runtime/divsi3.c 放最后）。
  */
 
 #include <stdio.h>
@@ -34,25 +37,38 @@ static char *read_file(const char *path) {
 }
 
 int main(int argc, char **argv) {
-    const char *in_file = NULL;
     const char *out_file = NULL;
+    const char *files[64];
+    int nf = 0;
 
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-o") == 0 && i + 1 < argc) {
             out_file = argv[++i];
-        } else if (!in_file) {
-            in_file = argv[i];
         } else {
-            fprintf(stderr, "usage: symcc.exe <file.c> [-o out.asm]\n");
-            return 2;
+            files[nf++] = argv[i];
         }
     }
-    if (!in_file) {
-        fprintf(stderr, "usage: symcc.exe <file.c> [-o out.asm]\n");
+    if (nf == 0) {
+        fprintf(stderr, "usage: symcc.exe <file.c> [more.c...] [-o out.asm]\n");
         return 2;
     }
 
-    char *src = read_file(in_file);
+    /* 拼接全部源文件（顺序 = 命令行顺序；多文件可合并全局符号） */
+    char *src = NULL;
+    size_t total = 0;
+    for (int i = 0; i < nf; i++) {
+        char *buf = read_file(files[i]);
+        size_t len = strlen(buf);
+        char *newsrc = (char *)realloc(src, total + len + 2);
+        if (!newsrc) { fprintf(stderr, "out of memory\n"); exit(1); }
+        src = newsrc;
+        memcpy(src + total, buf, len);
+        total += len;
+        src[total++] = '\n';          /* 文件间加换行，避免行尾粘连 */
+        src[total] = 0;
+        free(buf);
+    }
+
     FILE *out = out_file ? fopen(out_file, "w") : stdout;
     if (!out) {
         fprintf(stderr, "cannot open %s for writing\n", out_file);

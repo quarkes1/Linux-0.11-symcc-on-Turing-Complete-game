@@ -42,11 +42,22 @@ static void emit_label(const char *l) {
     fprintf(out_asm, "%s:\n", l);
 }
 
-/* 数字常量 → r1；>0xFFFF 报错 */
+/* 数字常量 → r1。
+ * 立即数上限 16 位：>0xFFFF 拆高位/低位拼接（mov hi; lsl 16; or lo），
+ * 上限 0xFFFFFFFF（M1 无 64 位） */
 static void gen_num(int64_t val, Token *t) {
-    if (val > 0xFFFF || val < 0)
+    if (val > 0xFFFFFFFFLL || val < 0)
         err_imm(t, val);
-    fprintf(out_asm, "    mov r1, %lld        ; %lld\n", (long long)val, (long long)val);
+    int64_t hi = (val >> 16) & 0xFFFF;
+    int64_t lo = val & 0xFFFF;
+    if (hi) {
+        fprintf(out_asm, "    mov r1, %lld        ; 常量高位\n", (long long)hi);
+        fprintf(out_asm, "    lsl r1, r1, 16\n");
+        if (lo)
+            fprintf(out_asm, "    or r1, r1, %lld     ; 常量低位\n", (long long)lo);
+    } else {
+        fprintf(out_asm, "    mov r1, %lld        ; %lld\n", (long long)lo, (long long)val);
+    }
 }
 
 /* 变量地址 → r9。局部变量相对帧基址 r10（函数入口 sp），
@@ -240,6 +251,8 @@ static void gen_expr(Node *n) {
             return;
         }
     case ND_MUL:
+    case ND_DIV:
+    case ND_MOD:
     case ND_EQ:
     case ND_NE:
     case ND_LT:
@@ -253,6 +266,22 @@ static void gen_expr(Node *n) {
         fprintf(out_asm, "    pop r2             ; 取回右操作数\n");
         switch (n->kind) {
         case ND_MUL: fprintf(out_asm, "    mul r1, r1, r2     ; *\n"); return;
+        case ND_DIV:
+        case ND_MOD:
+            if (n->ty->is_unsigned) {
+                /* 硬件 div/mod 即无符号：直接指令 */
+                fprintf(out_asm, "    %s r1, r1, r2     ; %s（无符号）\n",
+                        n->kind == ND_DIV ? "div" : "mod",
+                        n->kind == ND_DIV ? "/" : "%");
+            } else {
+                /* 有符号：调用运行时（全栈传参：arg0=左、arg1=右） */
+                fprintf(out_asm, "    push r2            ; arg1 = 右操作数\n");
+                fprintf(out_asm, "    push r1            ; arg0 = 左操作数\n");
+                fprintf(out_asm, "    call __%s\n",
+                        n->kind == ND_DIV ? "divsi3" : "modsi3");
+                fprintf(out_asm, "    add sp, sp, 8      ; 清理实参\n");
+            }
+            return;
         case ND_EQ:  gen_compare("je", "=="); return;
         case ND_NE:  gen_compare("jne", "!="); return;
         case ND_LT:  gen_compare("jl", "<"); return;   /* 有符号 */
