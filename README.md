@@ -53,11 +53,109 @@ bash scripts/build_kernel.sh    # 50 个内核 .c → symcc → symld → kernel
 
 ## 在游戏里运行你的 C 程序
 
-1. 主机编译：`symcc main.c -o out.asm`
+1. 主机编译：`./symcc/symcc.exe main.c runtime/tty.c runtime/divsi3.c -o out.asm`（屏幕输出需链接 tty.c，见「使用教程」）
 2. 复制 `out.asm` 全文
 3. 游戏沙盒：主内存 RAM 右键 **"Edit assembly"** → 粘贴 → 运行
    （屏幕组件需链接到主内存；RAM 与 DiskA 均为 **Big endian**、8 MB）
 4. 屏幕输出即为程序结果（M1 验收：左上角显示 Hello）
+
+## 使用教程
+
+### 最小可运行程序
+
+`hello.c`：
+
+```c
+int main() {
+    putstr("Hello, SymphonyPlus!");
+    putchar(10);            /* 换行 */
+    return 42;              /* main 的返回值 = 模拟器 exit_code */
+}
+```
+
+编译（全链路：预处理 → 编译 → 统一链接 → 绝对地址 asm）：
+
+```bash
+./symcc/symcc.exe hello.c runtime/tty.c runtime/divsi3.c -o hello.asm
+```
+
+本机验证（无需进游戏）：
+
+```bash
+./emu/asm.exe hello.asm hello.bin    # 汇编 → bin
+./emu/emu.exe hello.bin              # 模拟执行，打印 exit_code = 42
+```
+
+然后把 `hello.asm` 全文粘贴进游戏 RAM（见上一节）。
+
+要点：
+- **屏幕输出要链接 `runtime/tty.c`**，并同时带上 **`runtime/divsi3.c`** —— `putchar` 内部用 `%` 换行，缺 `divsi3.c` 时链接报 `undefined jump target: __modsi3`
+- **有符号 `/` 和 `%` 要链接 `runtime/divsi3.c`** —— 硬件只有无符号除法，编译器把 `a / b` 自动编译成 `call __divsi3`
+- 多文件 = 命令行写多个 `.c`，一起编译链接；无选项时输出绝对地址 asm
+
+### 常用 API
+
+屏幕输出（`runtime/tty.c`）：
+
+| 名称 | 签名 | 说明 |
+|---|---|---|
+| `putchar` | `int putchar(int c)` | 输出一个字符；识别 LF(10) 换行、CR(13) 回行首、退格(8) |
+| `putstr` | `int putstr(char *s)` | 输出字符串 |
+| `cursor` | `int cursor`（全局变量） | 光标位置 0..96×40，可读写 |
+| `fb` | `char *fb`（全局变量，初值 0x2000） | 帧缓冲指针，`*(fb + i)` 直接读写屏幕字符 |
+
+有符号除法（`runtime/divsi3.c`，编译器对 `/` `%` 自动调用）：
+
+| 名称 | 签名 |
+|---|---|
+| `__divsi3` | `int __divsi3(int a, int b)` |
+| `__modsi3` | `int __modsi3(int a, int b)` |
+
+注意：
+- 以上函数**没有头文件**，直接调用即可（编译器预扫描会把未声明函数全局注册）
+- 没有 printf / malloc / 任何 libc —— 需要什么函数就自己写（`runtime/tty.c` 是无依赖纯 C 的最佳样板）
+
+### #include 与头文件
+
+内置头文件目前只有一个：`symcc/include/config.h`（目标机配置常量）：
+
+```c
+#define FRAMEBUF_BASE 0x2000   /* 屏幕帧缓冲基址（ASCII 8 模式） */
+#define COLS 96                /* 每行字符数 */
+#define ROWS 40                /* 总行数 */
+```
+
+```c
+#include "config.h"
+int main() {
+    putchar('0' + COLS / 10);   /* 用宏写 96×40 屏幕逻辑 */
+    putchar('0' + COLS % 10);
+    putchar(10);
+    return ROWS;
+}
+```
+
+```bash
+./symcc/symcc.exe -I symcc/include prog.c runtime/tty.c runtime/divsi3.c -o prog.asm
+```
+
+搜索规则（与 gcc 一致）：
+- `#include "file.h"` → 当前文件所在目录 → `-I` 目录 → 当前工作目录
+- `#include <file.h>` → 仅 `-I` 目录
+
+### 分步编译与 CLI 参考
+
+| 命令 | 产物 |
+|---|---|
+| `symcc -E foo.c -o foo.i` | 只预处理（查看宏/头文件展开结果） |
+| `symcc -S foo.c -o foo.s` | 可重定位 asm（.sym 文本对象） |
+| `symcc -c foo.c -o foo.sym` | .sym 对象（多文件分步编译） |
+| `symld a.sym b.sym -o out.asm [--bin out.bin] [--crt0 path]` | 独立链接器 |
+| `symcc a.c b.c -o out.asm` | 全链路：预处理 → 编译 → 统一链接 → 绝对 asm |
+
+其余选项：`-I <dir>`（可多个）、`-D NAME[=VAL]`（预定义宏，`-DNAME` 连写亦可）、`-save-temps`（保留 .i/.s/.sym 中间文件）、`--d32`（强制数据引用走 32 位装载）、`-v`（打印各阶段文件名）。
+
+说明：symcc 全链路自动带 `runtime/crt0.asm` 启动模板（屏幕 ASCII 模式与帧缓冲基址、栈顶 0x4000、bss 清零、`call main`）；`symld` 单独链接时 `--crt0` 默认也是它，可省略。
 
 ## 技术概览
 
