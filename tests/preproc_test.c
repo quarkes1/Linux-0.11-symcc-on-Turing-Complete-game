@@ -91,12 +91,47 @@ static void test_comments_removed(void) {
     free(out);
 }
 
+/* 已跳过的条件组内的嵌套 #if/#elif 不得求值（gcc 行为）：表达式即使
+ * 本求值器无法解析（如孤立的 '('）也不能报错，组内内容不得输出。 */
+static void test_skipped_if_no_eval(void) {
+    char *out = pp("#if 0\n"
+                   "#if (\n"
+                   "int bad1;\n"
+                   "#endif\n"
+                   "#if 1\n"
+                   "#elif (\n"
+                   "#else\n"
+                   "int bad2;\n"
+                   "#endif\n"
+                   "#endif\n"
+                   "int ok;\n");
+    CHECK(strstr(out, "int ok ;"));
+    CHECK(!strstr(out, "bad1"));
+    CHECK(!strstr(out, "bad2"));
+    free(out);
+}
+
+/* #pragma 整行无操作；#error 在被跳过时忽略（取中分支的 #error 退出
+ * 进程，无法在进程内测试——见 report 的驱动验证）。 */
+static void test_pragma_error(void) {
+    char *out = pp("#pragma once\n"
+                   "#pragma pack(push, 1)\n"
+                   "#if 0\n"
+                   "#error this must be ignored\n"
+                   "#endif\n"
+                   "int ok;\n");
+    CHECK(strstr(out, "int ok ;"));
+    CHECK(!strstr(out, "pragma"));
+    CHECK(!strstr(out, "ignored"));
+    free(out);
+}
+
 int main(void) {
     test_object_macro();    test_func_macro();      test_nested_macro();
     test_cond_ifdef();      test_if_expr();         test_if_undefined_is_zero();
     test_defined_op();      test_stringize();       test_paste();
     test_line_continuation(); test_undef();         test_cmdline_defines();
-    test_comments_removed();
+    test_comments_removed(); test_skipped_if_no_eval(); test_pragma_error();
     printf("preproc_test: %d passed, %d failed\n", npass, nfail);
     return nfail ? 1 : 0;
 }

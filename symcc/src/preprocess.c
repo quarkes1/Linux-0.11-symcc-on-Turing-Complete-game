@@ -975,6 +975,13 @@ static Token *do_include(Token *t, const char *src_name,
 static void do_cond_if(Token *t, int kind) {
     /* kind: 0=#if 1=#ifdef 2=#ifndef；t = 指令名后第一个 token */
     int v;
+    if (skipping()) {
+        /* 外层条件组已被跳过：嵌套 #if 不计算表达式（gcc 行为——跳过文本
+         * 里可以有本求值器解析不了的表达式），整组推为死分支。
+         * taken=1 使本层的 #elif/#else 一律维持跳过，永不激活。 */
+        cond_push(1, 1);
+        return;
+    }
     if (kind == 1 || kind == 2) {
         if (!tok_ident(t)) {
             fprintf(stderr, kind == 1 ? "#ifdef expects a macro name\n"
@@ -990,8 +997,7 @@ static void do_cond_if(Token *t, int kind) {
         }
         Token *tail = line_end(t);
         Token *ex = pre_defs(t, tail);
-        if (!skipping())
-            ex = expand_range(ex, chain_tail(ex));
+        ex = expand_range(ex, chain_tail(ex));
         v = (int)eval_chain(ex, chain_tail(ex));
     }
     cond_push(!v, v != 0);
@@ -1003,21 +1009,25 @@ static void do_elif(Token *t) {
         exit(1);
     }
     int lv = cond_depth - 1;
-    if (!cond_taken[lv]) {
+    if (cond_taken[lv]) {
+        cond_skip[lv] = 1;   /* 已取真分支：本层后续 #elif/#else 均跳过 */
+    } else if (skipping_below(lv)) {
+        /* 父层跳过：不计算表达式，本层链保持死。防御分支——正常流程中
+         * 父层跳过的组是以 (skip=1,taken=1) 推入的，走上面的分支。 */
+        cond_skip[lv] = 1;
+        cond_taken[lv] = 1;
+    } else {
         int v;
         if (t->kind == TK_EOF || tok_at_bol(t)) {
             v = 1;   /* 裸 #elif 视为 #elif 1（gcc 早期扩展；Linux 0.11 blk.h 用到） */
         } else {
             Token *tail = line_end(t);
             Token *ex = pre_defs(t, tail);
-            if (!skipping_below(lv))
-                ex = expand_range(ex, chain_tail(ex));
+            ex = expand_range(ex, chain_tail(ex));
             v = (int)eval_chain(ex, chain_tail(ex));
         }
         cond_taken[lv] = (v != 0);
         cond_skip[lv] = !v;
-    } else {
-        cond_skip[lv] = 1;   /* 已取真分支：本层后续 #elif/#else 均跳过 */
     }
 }
 
@@ -1124,6 +1134,23 @@ static Token *pp_tokens(Token *tok, const char *src_name,
                     exit(1);
                 }
                 cond_depth--;
+                t = line_end(name)->next;
+            } else if (tok_name_is(name, "pragma")) {
+                /* 无操作：忽略本行（不展开不输出） */
+                t = line_end(name)->next;
+            } else if (tok_name_is(name, "error")) {
+                if (!skipping()) {
+                    /* 分支被取中：打印 #error 之后到行尾的原文并退出 */
+                    Token *p = name->next;
+                    if (p->kind != TK_EOF && !tok_at_bol(p)) {
+                        Token *e = line_end(name);
+                        int mlen = (int)((e->loc + e->len) - p->loc);
+                        fprintf(stderr, "#error %.*s\n", mlen, p->loc);
+                    } else {
+                        fprintf(stderr, "#error\n");
+                    }
+                    exit(1);
+                }
                 t = line_end(name)->next;
             } else {
                 if (!skipping()) {
