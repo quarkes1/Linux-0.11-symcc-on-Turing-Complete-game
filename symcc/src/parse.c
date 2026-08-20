@@ -1,26 +1,29 @@
 /* symcc/src/parse.c — 递归下降语法分析
  *
- * M1 文法（int 全部有符号）：
+ * M1 文法（char 有符号，unsigned 仅标注供 Task 8 消费）：
  *   program   = (funcdef | global)*
- *   funcdef   = ("int" | "void") ident "(" params ")" "{" stmt* "}"
- *   params    = ε | "void" | ("int" ident ("," "int" ident)*)
- *   global    = "int" ident ("=" num)? ";"
+ *   funcdef   = declspec ident "(" params ")" "{" stmt* "}"
+ *   params    = ε | "void" | (declspec declarator ("," declspec declarator)*)
+ *   global    = declspec declarator ("=" num)? ";"
  *   stmt      = "return" expr ";"
  *             | "{" stmt* "}"
- *             | "int" ident ("=" expr)? ";"
+ *             | declspec declarator ("=" expr)? ";"
  *             | expr ";"
  *             | "if" "(" expr ")" stmt ("else" stmt)?
  *             | "while" "(" expr ")" stmt
  *             | "for" "(" expr? ";" expr? ";" expr? ")" stmt
  *   expr      = assign
  *   assign    = logor ("=" assign)?
- *   primary   = num | "(" expr ")" | ident | 字符字面量 | 字符串字面量
+ *   unary     = ("-" | "!" | "&" | "*") unary | primary
+ *   primary   = num | "(" expr ")" | ident | 字符/字符串字面量
  *             | ident "(" args ")"          （函数调用）
  *
- * 局部变量：声明时分配栈槽（offset 从 4 起递增），记录在符号链表中。
+ * 局部变量：声明时分配栈槽（offset 从 4 起递增，全部 4 字节），记录在
+ * 符号链表中；char 变量也占 4 字节槽，读写用 load_8/store_8 + 符号扩展。
  * 参数：也是局部变量；被调方入口 sp 指向返回地址，实参 k 在 [sp+4+4k]，
  * 序言负责拷入各自栈槽（见 codegen.c）。
- * 限制：被调函数须先定义（M1 单遍，test 均满足）；无作用域回收。
+ * 限制：被调函数须先定义（M1 单遍，test 均满足）；无作用域回收；
+ * & 只允许取变量/字符串地址（M1 无复合左值）。
  */
 
 #include <stdio.h>
@@ -31,12 +34,24 @@
 
 static Token *tok;
 
+/* 类型单例 */
+Type *ty_int, *ty_char, *ty_void;
+
+Type *ty_ptr(Type *base) {
+    Type *t = (Type *)calloc(1, sizeof(Type));
+    if (!t) { fprintf(stderr, "out of memory\n"); exit(1); }
+    t->kind = TY_PTR;
+    t->base = base;
+    return t;
+}
+
 /* 局部变量符号表（链表，每个函数独立） */
 typedef struct Var {
     struct Var *next;
     char *name;
     int len;
     int offset;      /* 相对 sp 的负偏移 */
+    Type *ty;
 } Var;
 
 static Var *vars;
@@ -76,6 +91,69 @@ static Node *new_binary(int kind, Node *lhs, Node *rhs, Token *t) {
     return n;
 }
 
+/* 二元运算：默认 int 类型；指针算术 p+n/p-n 结果为指针类型
+ * （p-q 两个指针相减 → int，即元素个数差） */
+static Node *new_binop(int kind, Node *lhs, Node *rhs, Token *t) {
+    Node *n = new_binary(kind, lhs, rhs, t);
+    n->ty = ty_int;
+    if ((kind == ND_ADD || kind == ND_SUB) &&
+        lhs->ty->kind == TY_PTR && rhs->ty->kind != TY_PTR)
+        n->ty = lhs->ty;
+    return n;
+}
+
+/* declspec = ("unsigned"? ("int" | "char")) | "void" */
+static Type *declspec(void) {
+    bool is_unsigned = false;
+    if (tok_is_kw(tok, "unsigned")) {
+        is_unsigned = true;
+        tok = tok->next;
+    }
+    if (tok_is_kw(tok, "void")) {
+        if (is_unsigned)
+            error_at(tok, "'void' cannot be unsigned");
+        tok = tok->next;
+        return ty_void;
+    }
+    if (tok_is_kw(tok, "int")) {
+        tok = tok->next;
+        if (is_unsigned) {
+            Type *t = (Type *)calloc(1, sizeof(Type));
+            if (!t) { fprintf(stderr, "out of memory\n"); exit(1); }
+            *t = *ty_int;
+            t->is_unsigned = true;
+            return t;              /* 独立副本：不污染 int 单例 */
+        }
+        return ty_int;
+    }
+    if (tok_is_kw(tok, "char")) {
+        tok = tok->next;
+        if (is_unsigned) {
+            Type *t = (Type *)calloc(1, sizeof(Type));
+            if (!t) { fprintf(stderr, "out of memory\n"); exit(1); }
+            *t = *ty_char;
+            t->is_unsigned = true;
+            return t;
+        }
+        return ty_char;
+    }
+    error_at(tok, "expected type specifier");
+    return NULL; /* 不可达 */
+}
+
+/* declarator = "*"* ident；返回完整类型，名字写入 *name */
+static Type *declarator(Type *base, Token **name) {
+    while (tok_is(tok, "*")) {
+        base = ty_ptr(base);
+        tok = tok->next;
+    }
+    if (tok->kind != TK_IDENT)
+        error_at(tok, "expected name");
+    *name = tok;
+    tok = tok->next;
+    return base;
+}
+
 static Node *expr(void);
 static Node *stmt(void);
 
@@ -95,6 +173,7 @@ static Node *primary(void) {
     if (tok->kind == TK_NUM) {
         Node *n = new_node(ND_NUM, tok);
         n->val = tok->val;
+        n->ty = ty_int;
         tok = tok->next;
         return n;
     }
@@ -107,6 +186,7 @@ static Node *primary(void) {
     if (tok->kind == TK_STR) {
         Node *n = new_node(ND_STR, tok);
         n->val = nstrings++;
+        n->ty = ty_ptr(ty_char);      /* 字符串 = char* */
         *str_tail = tok;              /* 收集到程序级链表（数据段输出用） */
         str_tail = &tok->next;
         tok = tok->next;
@@ -121,6 +201,7 @@ static Node *primary(void) {
                     tok = tok->next;          /* 跳到 ( */
                     Node *n = new_node(ND_CALL, t);
                     n->name = xstrndup(t->loc, (size_t)t->len);
+                    n->ty = f->ret_ty;
                     n->val = 0;               /* 实参数 */
                     skip("(");
                     if (!tok_is(tok, ")")) {
@@ -144,6 +225,7 @@ static Node *primary(void) {
             if (v->len == tok->len && strncmp(v->name, tok->loc, (size_t)v->len) == 0) {
                 Node *n = new_node(ND_VAR, tok);
                 n->offset = v->offset;
+                n->ty = v->ty;
                 tok = tok->next;
                 return n;
             }
@@ -153,6 +235,7 @@ static Node *primary(void) {
             if (g->len == tok->len && strncmp(g->name, tok->loc, (size_t)g->len) == 0) {
                 Node *n = new_node(ND_GVAR, tok);
                 n->name = xstrndup(tok->loc, (size_t)tok->len);
+                n->ty = g->ty;
                 tok = tok->next;
                 return n;
             }
@@ -163,17 +246,39 @@ static Node *primary(void) {
     return NULL; /* 不可达 */
 }
 
-/* unary = ("-" | "!") unary | primary */
+/* unary = ("-" | "!" | "&" | "*") unary | primary */
 static Node *unary(void) {
     if (tok_is(tok, "-")) {
         Token *t = tok;
         tok = tok->next;
-        return new_binary(ND_NEG, unary(), NULL, t);
+        Node *n = new_binop(ND_NEG, unary(), NULL, t);
+        n->ty = ty_int;
+        return n;
     }
     if (tok_is(tok, "!")) {
         Token *t = tok;
         tok = tok->next;
-        return new_binary(ND_NOT, unary(), NULL, t);
+        Node *n = new_binary(ND_NOT, unary(), NULL, t);
+        n->ty = ty_int;
+        return n;
+    }
+    if (tok_is(tok, "&")) {
+        Token *t = tok;
+        tok = tok->next;
+        Node *n = new_binop(ND_ADDR, unary(), NULL, t);
+        if (n->lhs->kind != ND_VAR && n->lhs->kind != ND_GVAR && n->lhs->kind != ND_STR)
+            error_at(t, "invalid operand for '&'");
+        n->ty = ty_ptr(n->lhs->ty);
+        return n;
+    }
+    if (tok_is(tok, "*")) {
+        Token *t = tok;
+        tok = tok->next;
+        Node *n = new_binary(ND_DEREF, unary(), NULL, t);
+        if (n->lhs->ty->kind != TY_PTR)
+            error_at(t, "dereference of non-pointer");
+        n->ty = n->lhs->ty->base;
+        return n;
     }
     return primary();
 }
@@ -184,7 +289,7 @@ static Node *mul(void) {
     while (tok_is(tok, "*")) {
         Token *t = tok;
         tok = tok->next;
-        n = new_binary(ND_MUL, n, unary(), t);
+        n = new_binop(ND_MUL, n, unary(), t);
     }
     return n;
 }
@@ -196,11 +301,11 @@ static Node *additive(void) {
         if (tok_is(tok, "+")) {
             Token *t = tok;
             tok = tok->next;
-            n = new_binary(ND_ADD, n, mul(), t);
+            n = new_binop(ND_ADD, n, mul(), t);
         } else if (tok_is(tok, "-")) {
             Token *t = tok;
             tok = tok->next;
-            n = new_binary(ND_SUB, n, mul(), t);
+            n = new_binop(ND_SUB, n, mul(), t);
         } else {
             return n;
         }
@@ -214,19 +319,19 @@ static Node *relational(void) {
         if (tok_is(tok, "<")) {
             Token *t = tok;
             tok = tok->next;
-            n = new_binary(ND_LT, n, additive(), t);
+            n = new_binop(ND_LT, n, additive(), t);
         } else if (tok_is(tok, "<=")) {
             Token *t = tok;
             tok = tok->next;
-            n = new_binary(ND_LE, n, additive(), t);
+            n = new_binop(ND_LE, n, additive(), t);
         } else if (tok_is(tok, ">")) {
             Token *t = tok;
             tok = tok->next;
-            n = new_binary(ND_GT, n, additive(), t);
+            n = new_binop(ND_GT, n, additive(), t);
         } else if (tok_is(tok, ">=")) {
             Token *t = tok;
             tok = tok->next;
-            n = new_binary(ND_GE, n, additive(), t);
+            n = new_binop(ND_GE, n, additive(), t);
         } else {
             return n;
         }
@@ -240,11 +345,11 @@ static Node *equality(void) {
         if (tok_is(tok, "==")) {
             Token *t = tok;
             tok = tok->next;
-            n = new_binary(ND_EQ, n, relational(), t);
+            n = new_binop(ND_EQ, n, relational(), t);
         } else if (tok_is(tok, "!=")) {
             Token *t = tok;
             tok = tok->next;
-            n = new_binary(ND_NE, n, relational(), t);
+            n = new_binop(ND_NE, n, relational(), t);
         } else {
             return n;
         }
@@ -257,7 +362,7 @@ static Node *logand(void) {
     while (tok_is(tok, "&&")) {
         Token *t = tok;
         tok = tok->next;
-        n = new_binary(ND_LOGAND, n, equality(), t);
+        n = new_binop(ND_LOGAND, n, equality(), t);
     }
     return n;
 }
@@ -268,7 +373,7 @@ static Node *logor(void) {
     while (tok_is(tok, "||")) {
         Token *t = tok;
         tok = tok->next;
-        n = new_binary(ND_LOGOR, n, logand(), t);
+        n = new_binop(ND_LOGOR, n, logand(), t);
     }
     return n;
 }
@@ -279,9 +384,11 @@ static Node *assign(void) {
     if (tok_is(tok, "=")) {
         Token *t = tok;
         tok = tok->next;
-        if (n->kind != ND_VAR && n->kind != ND_GVAR)
+        if (n->kind != ND_VAR && n->kind != ND_GVAR && n->kind != ND_DEREF)
             error_at(t, "assignment target is not a variable");
-        n = new_binary(ND_ASSIGN, n, assign(), t);
+        Node *an = new_binary(ND_ASSIGN, n, assign(), t);
+        an->ty = n->ty;            /* 赋值表达式类型 = 目标类型 */
+        n = an;
     }
     return n;
 }
@@ -293,27 +400,29 @@ static Node *expr(void) {
 
 /* ---------- 语句 ---------- */
 
-/* 声明：int ident (= expr)? ; 返回 ND_VAR（无初始化）或 ND_ASSIGN */
+/* 声明：declspec declarator (= expr)? ; 返回 ND_VAR（无初始化）或 ND_ASSIGN */
 static Node *decl_stmt(void) {
     Token *t = tok;
-    tok = tok->next;   /* 吃掉 int */
-    if (tok->kind != TK_IDENT)
-        error_at(tok, "expected variable name");
-    Token *name = tok;
-    tok = tok->next;
+    Type *base = declspec();
+    Token *name;
+    Type *ty = declarator(base, &name);
+    if (ty->kind == TY_VOID)
+        error_at(t, "cannot declare a variable of type void");
 
-    /* 分配栈槽（offset 为负：-4, -8, …） */
+    /* 分配栈槽（offset 为负：-4, -8, …；char 也占 4 字节） */
     locals_bytes += 4;
     Var *v = (Var *)calloc(1, sizeof(Var));
     if (!v) { fprintf(stderr, "out of memory\n"); exit(1); }
     v->name = name->loc;
     v->len = name->len;
+    v->ty = ty;
     v->offset = -locals_bytes;
     v->next = vars;
     vars = v;
 
     Node *n = new_node(ND_VAR, name);
     n->offset = v->offset;
+    n->ty = ty;
 
     if (tok_is(tok, "=")) {
         tok = tok->next;
@@ -334,7 +443,7 @@ static Node *stmt(void) {
         skip(";");
         return n;
     }
-    if (tok_is_kw(tok, "int")) {
+    if (tok_is_kw(tok, "int") || tok_is_kw(tok, "char") || tok_is_kw(tok, "unsigned")) {
         return decl_stmt();
     }
     if (tok_is_kw(tok, "if")) {
@@ -417,12 +526,12 @@ static Node *stmt(void) {
 /* ---------- 函数与全局 ---------- */
 
 /* funcdef = ("int" | "void") ident "(" params ")" "{" stmt* "}" */
-static Func *funcdef(bool is_void, Token *t) {
+static Func *funcdef(Type *ret_ty, Token *t) {
     Func *f = (Func *)calloc(1, sizeof(Func));
     if (!f) { fprintf(stderr, "out of memory\n"); exit(1); }
     f->name = xstrndup(t->loc, (size_t)t->len);
     f->len = t->len;
-    f->is_void = is_void;
+    f->ret_ty = ret_ty;
 
     /* 先注册再解析函数体：允许自递归/互递归调用 */
     f->next = funcs;
@@ -433,26 +542,24 @@ static Func *funcdef(bool is_void, Token *t) {
     locals_bytes = 0;
 
     skip("(");
-    /* 参数：int ident (, int ident)*；空参或 void */
+    /* 参数：declspec declarator (, declspec declarator)*；空参或 void */
     if (tok_is_kw(tok, "void")) {
         tok = tok->next;
     } else {
         while (!tok_is(tok, ")")) {
             if (tok->kind == TK_EOF)
                 error_at(tok, "unclosed '('");
-            if (!tok_is_kw(tok, "int"))
-                error_at(tok, "expected 'int' in parameter list");
-            tok = tok->next;
-            if (tok->kind != TK_IDENT)
-                error_at(tok, "expected parameter name");
-            Token *name = tok;
-            tok = tok->next;
+            if (!tok_is_kw(tok, "int") && !tok_is_kw(tok, "char") && !tok_is_kw(tok, "unsigned"))
+                error_at(tok, "expected type in parameter list");
+            Token *name;
+            Type *pt = declarator(declspec(), &name);
 
             locals_bytes += 4;                 /* 参数 = 局部变量 */
             Var *v = (Var *)calloc(1, sizeof(Var));
             if (!v) { fprintf(stderr, "out of memory\n"); exit(1); }
             v->name = name->loc;
             v->len = name->len;
+            v->ty = pt;
             v->offset = -locals_bytes;
             v->next = vars;
             vars = v;
@@ -491,6 +598,15 @@ Program *parse(Token *toks) {
     globals = NULL;
     funcs = NULL;
     nstrings = 0;
+
+    /* 类型单例初始化 */
+    ty_int = (Type *)calloc(1, sizeof(Type));
+    ty_char = (Type *)calloc(1, sizeof(Type));
+    ty_void = (Type *)calloc(1, sizeof(Type));
+    if (!ty_int || !ty_char || !ty_void) { fprintf(stderr, "out of memory\n"); exit(1); }
+    ty_int->kind = TY_INT;
+    ty_char->kind = TY_CHAR;
+    ty_void->kind = TY_VOID;
     str_head = NULL;
     str_tail = &str_head;
 
@@ -498,27 +614,25 @@ Program *parse(Token *toks) {
     if (!prog) { fprintf(stderr, "out of memory\n"); exit(1); }
 
     while (tok->kind != TK_EOF) {
-        if (!tok_is_kw(tok, "int") && !tok_is_kw(tok, "void"))
-            error_at(tok, "expected 'int' or 'void' at top level");
-        bool is_void = tok_is_kw(tok, "void");
-        tok = tok->next;
-
-        if (tok->kind != TK_IDENT)
-            error_at(tok, "expected name");
-        Token *name = tok;
-        tok = tok->next;
+        if (!tok_is_kw(tok, "int") && !tok_is_kw(tok, "char") &&
+            !tok_is_kw(tok, "unsigned") && !tok_is_kw(tok, "void"))
+            error_at(tok, "expected type at top level");
+        Type *base = declspec();
+        Token *name;
+        Type *ty = declarator(base, &name);
 
         if (tok_is(tok, "(")) {
             /* 函数定义（funcdef 内部自行注册到 funcs，允许自递归） */
-            funcdef(is_void, name);
+            funcdef(ty, name);
         } else {
-            /* 全局变量声明：int ident (= num)? ; */
-            if (is_void)
+            /* 全局变量声明：declspec declarator (= num)? ; */
+            if (ty->kind == TY_VOID)
                 error_at(tok, "'void' cannot declare a variable");
             Global *g = (Global *)calloc(1, sizeof(Global));
             if (!g) { fprintf(stderr, "out of memory\n"); exit(1); }
             g->name = xstrndup(name->loc, (size_t)name->len);
             g->len = name->len;
+            g->ty = ty;
             g->init_val = 0;
             if (tok_is(tok, "=")) {
                 tok = tok->next;

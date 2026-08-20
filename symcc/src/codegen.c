@@ -55,6 +55,31 @@ static void gen_addr(Node *n) {
     fprintf(out_asm, "    sub r9, r10, %d    ; addr of var\n", -n->offset);
 }
 
+/* 元素大小：char=1，int/指针=4（指针算术缩放用） */
+static int size_of(Type *t) {
+    return t->kind == TY_CHAR ? 1 : 4;
+}
+
+/* 按类型从 [r9] 加载到 r1：char 符号扩展（unsigned char 零扩展） */
+static void gen_load(Type *t) {
+    if (t->kind == TY_CHAR) {
+        fprintf(out_asm, "    load_8 r1, [r9]     ; char\n");
+        fprintf(out_asm, "    lsl r1, r1, 24\n");
+        fprintf(out_asm, "    %s r1, r1, 24   ; %s扩展\n",
+                t->is_unsigned ? "lsr" : "asr", t->is_unsigned ? "零" : "符号");
+    } else {
+        fprintf(out_asm, "    load_32 r1, [r9]    ; load\n");
+    }
+}
+
+/* 按类型把 r1 存入 [r9]：char 用 store_8（天然截断低 8 位） */
+static void gen_store(Type *t) {
+    if (t->kind == TY_CHAR)
+        fprintf(out_asm, "    store_8 [r9], r1    ; char\n");
+    else
+        fprintf(out_asm, "    store_32 [r9], r1   ; store\n");
+}
+
 /* 比较 materialize：r1 = (r1 op r2) ? 1 : 0；jmp_op = 真时跳转的助记符 */
 static void gen_compare(const char *jmp_op, const char *opname) {
     const char *Ltrue = new_label();
@@ -112,21 +137,54 @@ static void gen_expr(Node *n) {
         return;
     case ND_VAR:
         gen_addr(n);
-        fprintf(out_asm, "    load_32 r1, [r9]    ; var\n");
+        gen_load(n->ty);
         return;
     case ND_GVAR:
-        fprintf(out_asm, "    load_32 r1, [%s]    ; global\n", n->name);
+        if (n->ty->kind == TY_CHAR)
+            fprintf(out_asm, "    load_8 r1, [%s]     ; global char\n", n->name);
+        else
+            fprintf(out_asm, "    load_32 r1, [%s]    ; global\n", n->name);
+        if (n->ty->kind == TY_CHAR) {
+            fprintf(out_asm, "    lsl r1, r1, 24\n");
+            fprintf(out_asm, "    %s r1, r1, 24   ; %s扩展\n",
+                    n->ty->is_unsigned ? "lsr" : "asr",
+                    n->ty->is_unsigned ? "零" : "符号");
+        }
         return;
     case ND_STR:
         fprintf(out_asm, "    mov r1, s%lld       ; string\n", (long long)n->val);
         return;
+    case ND_ADDR:
+        /* 地址 → r1：局部 = r10-|offset|；全局/字符串 = label 地址 */
+        if (n->lhs->kind == ND_VAR)
+            fprintf(out_asm, "    sub r1, r10, %d    ; addr of var\n", -n->lhs->offset);
+        else if (n->lhs->kind == ND_GVAR)
+            fprintf(out_asm, "    mov r1, %s         ; addr of global\n", n->lhs->name);
+        else
+            fprintf(out_asm, "    mov r1, s%lld       ; addr of string\n", (long long)n->lhs->val);
+        return;
+    case ND_DEREF:
+        gen_expr(n->lhs);
+        fprintf(out_asm, "    mov r9, r1          ; deref addr\n");
+        gen_load(n->ty);
+        return;
     case ND_ASSIGN:
-        gen_expr(n->rhs);
-        if (n->lhs->kind == ND_GVAR)
-            fprintf(out_asm, "    store_32 [%s], r1   ; = global\n", n->lhs->name);
-        else {
+        if (n->lhs->kind == ND_DEREF) {
+            gen_expr(n->lhs->lhs);       /* 地址 */
+            fprintf(out_asm, "    push r1            ; 暂存地址\n");
+            gen_expr(n->rhs);
+            fprintf(out_asm, "    pop r9             ; 取回地址\n");
+            gen_store(n->lhs->ty);
+        } else if (n->lhs->kind == ND_GVAR) {
+            gen_expr(n->rhs);
+            if (n->lhs->ty->kind == TY_CHAR)
+                fprintf(out_asm, "    store_8 [%s], r1   ; = global char\n", n->lhs->name);
+            else
+                fprintf(out_asm, "    store_32 [%s], r1   ; = global\n", n->lhs->name);
+        } else {
+            gen_expr(n->rhs);
             gen_addr(n->lhs);
-            fprintf(out_asm, "    store_32 [r9], r1   ; =\n");
+            gen_store(n->lhs->ty);
         }
         return;
     case ND_CALL: {
@@ -162,6 +220,25 @@ static void gen_expr(Node *n) {
         return;
     case ND_ADD:
     case ND_SUB:
+        /* 指针算术：p+n → n×元素大小；p-q（两个指针）→ 差÷元素大小 */
+        {
+            bool ptr_l = n->lhs->ty->kind == TY_PTR;
+            bool ptr_r = n->rhs->ty->kind == TY_PTR;
+            gen_expr(n->rhs);
+            if (ptr_l && !ptr_r && size_of(n->lhs->ty->base) == 4)
+                fprintf(out_asm, "    mul r1, r1, 4      ; ptr arith: n*4\n");
+            fprintf(out_asm, "    push r1            ; 暂存右操作数\n");
+            gen_expr(n->lhs);
+            fprintf(out_asm, "    pop r2             ; 取回右操作数\n");
+            if (n->kind == ND_ADD) {
+                fprintf(out_asm, "    add r1, r1, r2     ; +\n");
+            } else {
+                fprintf(out_asm, "    sub r1, r1, r2     ; -\n");
+                if (ptr_l && ptr_r && size_of(n->lhs->ty->base) == 4)
+                    fprintf(out_asm, "    asr r1, r1, 2     ; ptr diff /4\n");
+            }
+            return;
+        }
     case ND_MUL:
     case ND_EQ:
     case ND_NE:
@@ -175,8 +252,6 @@ static void gen_expr(Node *n) {
         gen_expr(n->lhs);
         fprintf(out_asm, "    pop r2             ; 取回右操作数\n");
         switch (n->kind) {
-        case ND_ADD: fprintf(out_asm, "    add r1, r1, r2     ; +\n"); return;
-        case ND_SUB: fprintf(out_asm, "    sub r1, r1, r2     ; -\n"); return;
         case ND_MUL: fprintf(out_asm, "    mul r1, r1, r2     ; *\n"); return;
         case ND_EQ:  gen_compare("je", "=="); return;
         case ND_NE:  gen_compare("jne", "!="); return;

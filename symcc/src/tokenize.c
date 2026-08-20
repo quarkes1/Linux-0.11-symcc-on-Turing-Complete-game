@@ -40,7 +40,7 @@ int64_t tok_num(const Token *t) {
 static bool is_punct1(char c) {
     return c == '+' || c == '-' || c == '*' || c == '(' || c == ')' ||
            c == '{' || c == '}' || c == '=' || c == ';' || c == ',' ||
-           c == '<' || c == '>' || c == '!';
+           c == '<' || c == '>' || c == '!' || c == '&';
 }
 
 /* 双字符运算符（按最长匹配优先） */
@@ -53,7 +53,7 @@ static bool is_punct2(const char *p) {
 }
 
 /* 关键字表（识别靠词边界） */
-static const char *keywords[] = { "return", "int", "void", "if", "else", "while", "for" };
+static const char *keywords[] = { "return", "int", "char", "unsigned", "void", "if", "else", "while", "for" };
 
 Token *tokenize(const char *p) {
     Token head = {0};

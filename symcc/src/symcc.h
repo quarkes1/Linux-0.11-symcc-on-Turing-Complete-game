@@ -40,6 +40,18 @@ bool tok_is(const Token *t, const char *s);   /* 标点/关键字文本比较 */
 bool tok_is_kw(const Token *t, const char *kw);
 int64_t tok_num(const Token *t);
 
+/* ---------- 类型 ---------- */
+
+typedef struct Type Type;
+struct Type {
+    enum { TY_INT, TY_CHAR, TY_PTR, TY_VOID } kind;
+    Type *base;          /* TY_PTR：指向的类型 */
+    bool is_unsigned;    /* 供 Task 8 有符号/无符号除法区分 */
+};
+
+extern Type *ty_int, *ty_char, *ty_void;   /* 单例（parse.c） */
+Type *ty_ptr(Type *base);                  /* 指针类型（新建） */
+
 /* ---------- 语法 ---------- */
 
 enum {
@@ -66,6 +78,8 @@ enum {
     ND_GVAR,     /* 全局变量：name = 全局名（label 即名字） */
     ND_CALL,     /* 函数调用：name = 函数名，rhs = 实参链表，val = 实参数 */
     ND_STR,      /* 字符串字面量：val = 字符串编号（数据段 label s%d） */
+    ND_ADDR,     /* 一元 &：lhs = 变量（结果 = 地址） */
+    ND_DEREF,    /* 一元 *：lhs = 指针表达式（结果 = 指向值） */
 };
 
 typedef struct Node {
@@ -76,6 +90,7 @@ typedef struct Node {
     struct Node *els;    /* if-else / for-inc */
     struct Node *body;   /* for 循环体 */
     Token *tok;    /* 生成诊断与代码注释用 */
+    Type *ty;      /* 表达式/语句类型 */
     int64_t val;   /* ND_NUM / ND_CALL 实参数 / ND_STR 编号 */
     int offset;    /* ND_VAR：相对 sp 的负偏移 */
     char *name;    /* ND_GVAR / ND_CALL：标识符名（malloc） */
@@ -86,7 +101,7 @@ typedef struct Func {
     struct Func *next;
     char *name;
     int len;
-    bool is_void;    /* void 返回类型 */
+    Type *ret_ty;    /* 返回类型（TY_VOID = void） */
     int nargs;       /* 参数个数 */
     int frame_size;  /* 帧大小（局部变量 + 参数栈槽） */
     Node *body;      /* 语句链表 */
@@ -97,6 +112,7 @@ typedef struct Global {
     struct Global *next;
     char *name;
     int len;
+    Type *ty;
     int64_t init_val;   /* 初值（M1 常量） */
 } Global;
 

@@ -61,6 +61,8 @@ int main(void) {
     compile_and_run("tests/test_locals.c", 13, NULL, 0, "");
     compile_and_run("tests/test_control.c", 100, NULL, 0, "");
     compile_and_run("tests/test_fun.c", 162, NULL, 0, "");
+    compile_and_run("tests/test_ptr.c", 15, NULL, 0, "");
+    compile_and_run("tests/test_char.c", 66, NULL, 0, "");
     printf("ALL TESTS PASSED\n");
     return 0;
 }
