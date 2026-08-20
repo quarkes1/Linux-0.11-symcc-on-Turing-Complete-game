@@ -20,6 +20,14 @@ struct、数组、`#define` 宏、位运算、复合赋值、`++`/`--`、`?:`、
   产出可加载镜像（链接器纳入 M2；启动链/驱动归 M3）
 - 工具链架构：**gcc 式驱动**——`-o` 直接输出最终产物，阶段开关可选保留中间产物
 
+**验收状态（2026-08-20 完成）**：
+- ✅ 五套测试全绿（asm/emu/run_tests/preproc/link，全 `mingw32-make test` 通过）
+- ✅ 内核编译链接演练：`bash scripts/build_kernel.sh` → 50 个 .c + runtime
+  编译链接无错，输出 `KERNEL BUILD OK`（链接产物 build/kernel.asm）
+- ✅ 64KB J16 跳转限制以 trampoline 方案解决（pool + 跳板 + call/jmp 桩化，
+  见 README「寻址约束」）；未改动 ISA
+- ⬜ 运行验证归 M3（游戏内加载 kernel.asm）
+
 ## 2. 范围总表
 
 ### 2.1 做（C89 完整）
