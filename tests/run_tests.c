@@ -69,7 +69,7 @@ static void compile_and_run(const char *c_file, int expected_exit,
 
     n = asm_assemble(text, bin, sizeof bin, &aerr);
     assert(n > 0);
-    res = emu_run(bin, (size_t)n, 1 << 20, 100000000);
+    res = emu_run(bin, (size_t)n, 8 << 20, 100000000);
     assert(res.error == 0);
     assert(res.exit_code == expected_exit);
     if (screen_len)

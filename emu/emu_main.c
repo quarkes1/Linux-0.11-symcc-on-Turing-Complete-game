@@ -1,6 +1,6 @@
 /* emu/emu_main.c — emu.exe 命令行入口
  *
- * 用法: emu.exe <in.bin> [ram_size]   （ram_size 默认 1MB）
+ * 用法: emu.exe <in.bin> [ram_size]   （ram_size 默认 8MB，与游戏一致）
  * 打印 exit_code；配合 asm.exe 使用：asm.exe x.asm x.bin && emu.exe x.bin
  */
 
@@ -13,7 +13,7 @@ int main(int argc, char **argv) {
     FILE *fp;
     long len;
     uint8_t *bin;
-    size_t ram_size = 1 << 20;
+    size_t ram_size = 8 << 20;
     EmuResult r;
 
     if (argc < 2 || argc > 3) {

@@ -11,7 +11,8 @@
 #include <string.h>
 #include "emu/emu.h"
 
-#define DISK_SIZE (1 << 20)
+/* 与游戏 DiskA 组件容量一致（2026-08-20 用户实测设置：8MB） */
+#define DISK_SIZE (8 << 20)
 
 /* 大端读写 */
 static uint32_t rd32(const uint8_t *p) {
