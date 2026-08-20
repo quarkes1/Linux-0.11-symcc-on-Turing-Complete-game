@@ -1,0 +1,2 @@
+# Keep vendored Linux source byte-identical (no CRLF conversion)
+Reference/** -text
