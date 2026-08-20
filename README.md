@@ -1,12 +1,12 @@
 <p align="center">
   <b>SymphonyPlus</b><br>
-  在《Turing Complete》游戏里从零搭建 32 位 CPU，<br>
+  在《Turing Complete》游戏搭建 32 位 CPU，<br>
   再用自研 C 工具链让 <b>Linux 0.11</b> 内核编译通过
 </p>
 
 <p align="center">
   <b>32 位大端 CPU</b> · <b>C89 子集编译器</b> · <b>链接器</b> · <b>指令模拟器</b><br>
-  M0 环境验证 [完成] &nbsp;|&nbsp; M1 编译器骨架 [完成]（游戏内 Hello）&nbsp;|&nbsp; M2 内核编译演练 [完成]
+  M0 环境验证 [完成] &nbsp;|&nbsp; M1 编译器骨架 [完成]&nbsp;|&nbsp; M2 内核编译演练 [完成]
 </p>
 
 ---
