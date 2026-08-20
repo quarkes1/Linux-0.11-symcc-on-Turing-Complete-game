@@ -5,28 +5,17 @@
 #include "symcc.h"
 #include "link.h"
 
-/* preprocess_source_text（phase12 → tokenize → 预处理）→ parse → codegen；
- * 词法/预处理/语法错误直接退出进程。
+/* 预处理（phase12 → tokenize → 宏展开/指令，src_name 供相对 include）→
+ * parse → codegen；词法/预处理/语法错误直接退出进程。
  * 预处理器对无指令的纯 C 文本透明（M1 测试回归由 tests/preproc_test 与 run_tests 保证）。 */
 
-/* 编译到内存可重定位对象（多文件链接用；d32 = 数据引用拆 32 位装载） */
-bool symcc_compile_obj(const char *src, Obj *obj, bool d32) {
-    Token *pp = preprocess_source_text(src, NULL, NULL, 0, NULL, 0);
+/* 编译到内存可重定位对象（多文件链接用；d32 = 数据引用拆 32 位装载）。
+ * inc_dirs/defines 透传预处理（-I/-D；可为 NULL/0） */
+bool symcc_compile_obj(const char *src, const char *src_name, Obj *obj,
+                       bool d32, const char **inc_dirs, int n_inc,
+                       const char **defines, int n_def) {
+    Token *pp = preprocess_source_text(src, src_name, inc_dirs, n_inc,
+                                       defines, n_def);
     Program *prog = parse(pp);
     return codegen(prog, obj, d32);
-}
-
-/* 全链路：单文件 → 对象 → 链接（crt0 + halt）→ 绝对 asm 文本 */
-bool symcc_compile_text(const char *src, FILE *out) {
-    Obj *obj = obj_new();
-    bool ok = symcc_compile_obj(src, obj, false);
-    if (ok) {
-        LinkError err;
-        Obj *objs[1] = { obj };
-        ok = symld_link(objs, 1, "runtime/crt0.asm", out, NULL, &err);
-        if (!ok)
-            fprintf(stderr, "symld: %s\n", err.msg);
-    }
-    obj_free(obj);
-    return ok;
 }

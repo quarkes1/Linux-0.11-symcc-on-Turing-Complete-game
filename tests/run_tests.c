@@ -49,7 +49,8 @@ static void compile_and_run(const char *c_file, int expected_exit,
             text[tlen] = 0;
             assert(nobj < 8);
             objs[nobj] = obj_new();
-            assert(symcc_compile_obj(text, objs[nobj], false));
+            assert(symcc_compile_obj(text, rest, objs[nobj], false,
+                                     NULL, 0, NULL, 0));
             nobj++;
             rest = comma ? comma + 1 : NULL;
         }
@@ -61,7 +62,8 @@ static void compile_and_run(const char *c_file, int expected_exit,
     text[tlen] = 0;
     assert(nobj < 8);
     objs[nobj] = obj_new();
-    assert(symcc_compile_obj(text, objs[nobj], false));
+    assert(symcc_compile_obj(text, c_file, objs[nobj], false,
+                             NULL, 0, NULL, 0));
     nobj++;
 
     /* 链接 → 绝对 asm 文本 */

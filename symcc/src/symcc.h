@@ -227,12 +227,10 @@ bool codegen(Program *prog, Obj *obj, bool d32);
 /* ---------- 编译入口（main.c 与测试运行器共用） ---------- */
 
 /* 编译 C 源文本 src 到内存可重定位对象（多文件链接用）；
- * d32 = 数据引用拆 32 位装载（Task 6 起）。失败返回 false。 */
-bool symcc_compile_obj(const char *src, Obj *obj, bool d32);
-
-/* 全链路：编译 → 链接（runtime/crt0.asm）→ 绝对 asm 文本到 out。
- * 失败（含超出 16 位立即数/未定义符号）返回 false。
- * 词法/语法错误直接退出进程（工具型编译器，M1 从简）。 */
-bool symcc_compile_text(const char *src, FILE *out);
+ * src_name 供相对 include 解析；inc_dirs/defines 透传预处理（-I/-D，可为 NULL/0）；
+ * d32 = 数据引用拆 32 位装载。失败返回 false。 */
+bool symcc_compile_obj(const char *src, const char *src_name, Obj *obj,
+                       bool d32, const char **inc_dirs, int n_inc,
+                       const char **defines, int n_def);
 
 #endif /* SYMCC_H */
