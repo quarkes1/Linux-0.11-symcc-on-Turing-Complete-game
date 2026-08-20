@@ -5,7 +5,7 @@
 
 ## 1. 背景与目标
 
-用户在天堂制造（Turing Complete）游戏中用逻辑门搭建了一台 32 位计算机 "SymphonyPlus"
+用户在图灵完备（Turing Complete）游戏中用逻辑门搭建了一台 32 位计算机 "SymphonyPlus"
 （自定义指令集，见 `SymphonyPlus.isa`），最终目标是在其上**移植运行 Linux 0.11**。
 
 项目定位（用户确认）：
@@ -13,6 +13,8 @@
 - **教学目的优先**，性能与启动时间不敏感
 - 指令集、硬件**不再改动**（现有 CPU 成品不改；M7 为可选升级）
 - I/O 走游戏内**屏幕 + 键盘**组件（键盘监听真实键盘），达成虚拟机终端效果
+- 终端通道约定：`out`/`in` 仅传输数字量，**不作为字符串终端**；所有文本输出走屏幕
+  帧缓冲，输入走键盘组件（见 §2.3、§5.1）
 - 工作目录：`C:\Users\19444\Desktop\TuringComplete`；内核源码已置于 `Reference/Linux-0.11-main/`
 
 路线决策（用户已确认）：
@@ -50,6 +52,8 @@
 - **屏幕**：8 个设置寄存器（setting[0]=模式, [1]=数据偏移, [2]=前景色, [3]=背景色,
   [4]=字体）；模式 0 = ASCII 8（96×40 字符，1 字节/字符）；必须链接一块 RAM 作显存，
   读数据偏移 = setting[1]；`screen` 指令写 setting[A]=B
+- **字符显示机制**：模式 0 下屏幕持续读取链接 RAM（数据偏移起）的字节作为字符 →
+  显示文本 = 程序用 `store_8` 向帧缓冲区写字节（96×40 网格，行步长 96）
 - **键盘**：FIFO，每周期至多 1 事件；值 = `(按下<<8)|键码`；空队列返回 0
 - **时钟**：纳秒级 64 位；`time_0` 读低 32 位并锁存高 32 位给 `time_1`
   （time_1 在 time_0 未执行时为 0）
@@ -143,7 +147,7 @@ GNU 扩展（内联汇编等 → 内核去 asm 化路线）。
 | mm/memory.c, mm/page.s | ✏️ 删分页 → 位图分配器；fork 整段复制 |
 | kernel/fork.c, exec.c | ✏️ copy_mem 重写；a.out 加载改平坦（或自定义格式，M5 定） |
 | kernel/blk_drv/hd.c | ✏️ 重写为 pload/pstore 驱动（DiskA） |
-| kernel/chr_drv/ | ✏️ console.c + keyboard.S → screen/keyboard 驱动；serial 删 |
+| kernel/chr_drv/ | ✏️ console.c + keyboard.S → screen/keyboard 驱动（文本写帧缓冲 RAM，ASCII 8 模式）；serial 删 |
 | kernel/chr_drv/tty.c | ✏️ 保留 tty 概念，输出走屏幕帧缓冲 |
 | kernel/time.c | ✏️ 轮询 jiffies（time_0 锁存语义已确认） |
 | fs/ | ✅ 几乎全保留（MINIX v1，纯 C） |
@@ -166,7 +170,7 @@ GNU 扩展（内联汇编等 → 内核去 asm 化路线）。
 | # | 里程碑 | 游戏内验收 |
 |---|---|---|
 | M0 | 环境验证 | 端序已配置 ✅；RAM/DiskA 容量确认；asm 加载链路实测 |
-| M1 | 编译器骨架 | int/指针/算术/if/while/函数调用 → `out` 输出 "Hello" |
+| M1 | 编译器骨架 | int/指针/算术/if/while/函数调用 → 屏幕帧缓冲显示 "Hello" |
 | M2 | 类型系统+运行库 | struct/数组/switch/全局变量；signed div/mul/mod；printf 子集；**内核源码 C 特性审计** |
 | M3 | 大内存模型 | 程序超 64KB 正确运行（bank 切分/远跳转/文字池） |
 | M4 | 启动+最小内核 | boot、printk→屏幕、轮询 tick、协作式调度、直接调用式 syscall |
