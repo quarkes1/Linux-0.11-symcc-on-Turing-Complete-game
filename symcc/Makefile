@@ -4,7 +4,7 @@
 CC := gcc
 CFLAGS := -O0 -g -Wall -Wextra -I..
 
-SRCS := src/main.c src/tokenize.c src/parse.c src/codegen.c src/compile.c src/preprocess.c
+SRCS := src/main.c src/tokenize.c src/parse.c src/codegen.c src/compile.c src/preprocess.c src/obj.c src/link.c ../emu/isa.c ../emu/asm.c
 
 symcc.exe: $(SRCS) src/symcc.h
 	$(CC) $(CFLAGS) -o $@ $(SRCS)

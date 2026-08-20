@@ -305,10 +305,8 @@ void do_hd_request(void)
 	}
 	block += hd[dev].start_sect;
 	dev /= 5;
-	sec = block % hd_info[dev].sect; /* SYMPLUS-PORT: divl -> C div */
-		"r" (hd_info[dev].sect));
+	sec = block % hd_info[dev].sect; block /= hd_info[dev].sect; /* SYMPLUS-PORT: divl -> C div */
 	cyl = block / hd_info[dev].head; head = block % hd_info[dev].head; /* SYMPLUS-PORT: divl -> C div */
-		"r" (hd_info[dev].head));
 	sec++;
 	nsect = CURRENT->nr_sectors;
 	if (reset) {

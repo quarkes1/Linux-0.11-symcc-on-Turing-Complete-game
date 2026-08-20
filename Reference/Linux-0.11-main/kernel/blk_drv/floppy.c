@@ -102,7 +102,11 @@ static struct floppy_struct {
  */
 
 extern void floppy_interrupt(void);
-extern char tmp_floppy_area[1024];
+/* SYMPLUS-PORT: tmp_floppy_area was defined in hd.c upstream; the
+ * definition is missing in this tree, so make it a static array here
+ * (floppy.c is the only user). Explicit zero-init keeps it out of the
+ * low 64KB bss (J16 limit). */
+static char tmp_floppy_area[1024] = {0};
 
 /*
  * These are global variables, as that's the easiest way to give

@@ -356,3 +356,11 @@ exec_error1:
 
 
 
+
+/* SYMPLUS-PORT: sys_execve took a struct pt_regs * on x86; the syscall
+ * wrapper was trimmed with the inline-asm syscall path. Provide a stub —
+ * process exec arrives in M3. */
+int sys_execve(void)
+{
+	return -ENOSYS;
+}

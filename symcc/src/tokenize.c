@@ -73,7 +73,7 @@ static bool is_punct2(const char *p) {
 
 /* 关键字表（识别靠词边界） */
 static const char *keywords[] = {
-    "return", "int", "char", "unsigned", "void", "if", "else", "while", "for",
+    "return", "int", "char", "long", "short", "signed", "unsigned", "void", "if", "else", "while", "for",
     "typedef", "enum", "struct", "union", "static", "extern", "const",
     "volatile", "register", "inline", "sizeof", "break", "continue",
     "do", "switch", "case", "default", "goto",
@@ -193,10 +193,14 @@ Token *tokenize(const char *p) {
                     p++;
                 }
             }
-            /* u/U 后缀 → unsigned 字面量 */
-            bool unsuf = (*p == 'u' || *p == 'U');
-            if (unsuf)
-                p++;
+            /* u/U 与 l/L 后缀 → 无符号/长字面量（32 位平台 long 与 int 同宽；
+             * 顺序任意：ul/lu/UL/LU） */
+            bool unsuf = false, longsuf = false;
+            for (;;) {
+                if (!unsuf && (*p == 'u' || *p == 'U')) { unsuf = true; p++; }
+                else if (!longsuf && (*p == 'l' || *p == 'L')) { longsuf = true; p++; }
+                else break;
+            }
             if (!isalnum((unsigned char)*p) && *p != '_') {
                 Token *t = new_token(TK_NUM, start, (char *)p);
                 t->val = val;

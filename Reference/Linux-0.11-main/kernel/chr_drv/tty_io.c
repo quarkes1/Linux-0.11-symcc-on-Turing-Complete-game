@@ -147,7 +147,7 @@ void copy_to_cooked(struct tty_struct * tty)
 	signed char c;
 
 	while (!EMPTY(tty->read_q) && !FULL(tty->secondary)) {
-		GETCH(tty->read_q,c);
+		c = getch(&tty->read_q);
 		if (c==13)
 			if (I_CRNL(tty))
 				c=10;
@@ -166,8 +166,8 @@ void copy_to_cooked(struct tty_struct * tty)
 				        c==EOF_CHAR(tty))) {
 					if (L_ECHO(tty)) {
 						if (c<32)
-							PUTCH(127,tty->write_q);
-						PUTCH(127,tty->write_q);
+							putch(127,&tty->write_q);
+						putch(127,&tty->write_q);
 						tty->write(tty);
 					}
 					DEC(tty->secondary.head);
@@ -181,8 +181,8 @@ void copy_to_cooked(struct tty_struct * tty)
 					continue;
 				if (L_ECHO(tty)) {
 					if (c<32)
-						PUTCH(127,tty->write_q);
-					PUTCH(127,tty->write_q);
+						putch(127,&tty->write_q);
+					putch(127,&tty->write_q);
 					tty->write(tty);
 				}
 				DEC(tty->secondary.head);
@@ -211,18 +211,18 @@ void copy_to_cooked(struct tty_struct * tty)
 			tty->secondary.data++;
 		if (L_ECHO(tty)) {
 			if (c==10) {
-				PUTCH(10,tty->write_q);
-				PUTCH(13,tty->write_q);
+				putch(10,&tty->write_q);
+				putch(13,&tty->write_q);
 			} else if (c<32) {
 				if (L_ECHOCTL(tty)) {
-					PUTCH('^',tty->write_q);
-					PUTCH(c+64,tty->write_q);
+					putch('^',&tty->write_q);
+					putch(c+64,&tty->write_q);
 				}
 			} else
-				PUTCH(c,tty->write_q);
+				putch(c,&tty->write_q);
 			tty->write(tty);
 		}
-		PUTCH(c,tty->secondary);
+		putch(c,&tty->secondary);
 	}
 	wake_up(&tty->secondary.proc_list);
 }
@@ -259,7 +259,7 @@ int tty_read(unsigned channel, char * buf, int nr)
 			continue;
 		}
 		do {
-			GETCH(tty->secondary,c);
+			c = getch(&tty->secondary);
 			if (c==EOF_CHAR(tty) || c==10)
 				tty->secondary.data--;
 			if (c==EOF_CHAR(tty) && L_CANON(tty))
@@ -308,7 +308,7 @@ int tty_write(unsigned channel, char * buf, int nr)
 					c='\r';
 				if (c=='\n' && !cr_flag && O_NLCR(tty)) {
 					cr_flag = 1;
-					PUTCH(13,tty->write_q);
+					putch(13,&tty->write_q);
 					continue;
 				}
 				if (O_LCUC(tty))
@@ -316,7 +316,7 @@ int tty_write(unsigned channel, char * buf, int nr)
 			}
 			b++; nr--;
 			cr_flag = 0;
-			PUTCH(c,tty->write_q);
+			putch(c,&tty->write_q);
 		}
 		tty->write(tty);
 		if (nr>0)

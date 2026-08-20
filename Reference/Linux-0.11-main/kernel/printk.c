@@ -26,17 +26,8 @@ int printk(const char *fmt, ...)
 	va_start(args, fmt);
 	i=vsprintf(buf,fmt,args);
 	va_end(args);
-	/* SYMPLUS-PORT: fs user copy -> stub */
-		"push %%ds\n\t"
-		"pop %%fs\n\t"
-		"pushl %0\n\t"
-		"pushl $_buf\n\t"
-		"pushl $0\n\t"
-		"call _tty_write\n\t"
-		"addl $8,%%esp\n\t"
-		"popl %0\n\t"
-		"pop %%fs"
-		::"r" (i):"ax","cx","dx");
+	/* SYMPLUS-PORT: fs 用户段复制 -> 直接调 tty_write(0, buf, i) */
+	tty_write(0, buf, i);
 	return i;
 }
 

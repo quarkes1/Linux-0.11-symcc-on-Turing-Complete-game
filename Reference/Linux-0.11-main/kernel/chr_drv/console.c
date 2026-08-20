@@ -326,7 +326,7 @@ static void respond(struct tty_struct * tty)
 
 	cli();
 	while (*p) {
-		PUTCH(*p,tty->read_q);
+		putch(*p,&tty->read_q);
 		p++;
 	}
 	sti();
@@ -449,7 +449,7 @@ void con_write(struct tty_struct * tty)
 
 	nr = CHARS(tty->write_q);
 	while (nr--) {
-		GETCH(tty->write_q,c);
+		c = getch(&tty->write_q);
 		switch(state) {
 			case 0:
 				if (c>31 && c<127) {

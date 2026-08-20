@@ -158,9 +158,7 @@ extern void wake_up(struct task_struct ** p);
 #define ltr(n) ((void)0)
 #define lldt(n) ((void)0)
 #define str(n) ((n) = 0)
-	"shrl $4,%%eax" \
-	:"=a" (n) \
-	:"a" (0),"i" (FIRST_TSS_ENTRY<<3))
+	/* SYMPLUS-PORT: str asm tail removed */
 /*
  *	switch_to(n) should switch tasks to task nr n, first
  * checking that n isn't the current task, in which case it does nothing.
@@ -179,9 +177,12 @@ extern void wake_up(struct task_struct ** p);
 #define set_limit(ldt,limit) ((void)(ldt), (void)(limit)) /* SYMPLUS-PORT: real impl in M3 */
 /* SYMPLUS-PORT: inline asm -> stub (real impl in M3) */
 #define _get_base(addr) (0)
+#define get_base(ldt) (0) /* SYMPLUS-PORT: real impl in M3 */
 /* SYMPLUS-PORT: inline asm -> stub (real impl in M3) */
 #define get_limit(segment) (0)
 
 #endif
+
+
 
 

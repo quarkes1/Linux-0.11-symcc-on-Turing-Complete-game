@@ -28,10 +28,9 @@ struct tty_queue {
 #define LAST(a) ((a).buf[(TTY_BUF_SIZE-1)&((a).head-1)])
 #define FULL(a) (!LEFT(a))
 #define CHARS(a) (((a).head-(a).tail)&(TTY_BUF_SIZE-1))
-#define GETCH(queue,c) \
-(void)({c=(queue).buf[(queue).tail];INC((queue).tail);})
-#define PUTCH(c,queue) \
-(void)({(queue).buf[(queue).head]=(c);INC((queue).head);})
+/* SYMPLUS-PORT: GNU 语句表达式 ({...}) 不支持 → 普通静态函数（指针传队列） */
+static int getch(struct tty_queue * q) { int c; c = q->buf[q->tail]; INC(q->tail); return c; }
+static void putch(int c, struct tty_queue * q) { q->buf[q->head] = c; INC(q->head); }
 
 #define INTR_CHAR(tty) ((tty)->termios.c_cc[VINTR])
 #define QUIT_CHAR(tty) ((tty)->termios.c_cc[VQUIT])

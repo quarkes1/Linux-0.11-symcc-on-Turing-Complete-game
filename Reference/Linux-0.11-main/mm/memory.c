@@ -404,6 +404,11 @@ void mem_init(long start_mem, long end_mem)
 		mem_map[i++]=0;
 }
 
+/* SYMPLUS-PORT: pg_dir was defined in head.s (x86 asm, not built here);
+ * provide the page directory as data — real page tables arrive in M3.
+ * Explicit zero-init keeps it out of the low 64KB bss (J16 limit). */
+unsigned long pg_dir[1024] = {0};
+
 void calc_mem(void)
 {
 	int i,j,k,free=0;

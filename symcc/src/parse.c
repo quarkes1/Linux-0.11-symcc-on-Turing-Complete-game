@@ -37,7 +37,7 @@
 static Token *tok;
 
 /* 类型单例 */
-Type *ty_int, *ty_char, *ty_void;
+Type *ty_int, *ty_char, *ty_short, *ty_void;
 
 Type *ty_ptr(Type *base) {
     Type *t = (Type *)calloc(1, sizeof(Type));
@@ -52,6 +52,14 @@ static Type *ty_uint(void) {
     static Type t;
     t = *ty_int;
     t.is_unsigned = true;
+    return &t;
+}
+
+/* long/long long：32 位平台与 int 同宽（is_long 仅诊断/打印区分） */
+static Type *ty_long(void) {
+    static Type t;
+    t = *ty_int;
+    t.is_long = true;
     return &t;
 }
 
@@ -140,6 +148,7 @@ static int case_depth;
 /* 类型解析前向声明（eval_unary 的 sizeof/cast 用） */
 static Type *declspec(void);
 static Type *declarator(Type *base, Token **namep);
+static Type *paren_suffix(Type *ty, Token **namep);
 
 static void error_at(Token *t, const char *msg) {
     fprintf(stderr, "parse error at \"%.*s\": %s\n", t->len, t->loc, msg);
@@ -333,8 +342,9 @@ static Member *find_member(Type *ty, Token *t) {
 static bool is_typename(Token *t) {
     if (t->kind != TK_KEYWORD)
         return false;
-    return tok_is(t, "int") || tok_is(t, "char") || tok_is(t, "void") ||
-           tok_is(t, "unsigned") || tok_is(t, "struct") || tok_is(t, "union") ||
+    return tok_is(t, "int") || tok_is(t, "char") || tok_is(t, "long") ||
+           tok_is(t, "short") || tok_is(t, "signed") ||
+           tok_is(t, "void") || tok_is(t, "unsigned") || tok_is(t, "struct") || tok_is(t, "union") ||
            tok_is(t, "enum") || tok_is(t, "typedef") || tok_is(t, "static") ||
            tok_is(t, "extern") || tok_is(t, "const") || tok_is(t, "volatile") ||
            tok_is(t, "register") || tok_is(t, "inline");
@@ -566,6 +576,20 @@ static int64_t eval_unary(Token **cur) {
         tok = save;
         return e->ty->size;
     }
+    /* 类型转换：(type) unary —— 常量求值只取值（如 `(void *) 0` 初始化器） */
+    if (tok_is(t, "(") && is_declspec_start(t->next)) {
+        Token *save = tok;
+        tok = t->next;
+        Type *bt = declspec();
+        Token *nm = NULL;
+        declarator(bt, &nm);   /* abstract 声明符（名字可省略） */
+        *cur = tok;
+        tok = save;
+        if (!tok_is(*cur, ")"))
+            error_at(*cur, "expected ')' in cast");
+        *cur = (*cur)->next;
+        return eval_unary(cur);
+    }
     return eval_primary(cur);
 }
 
@@ -629,7 +653,16 @@ static Type *declspec(void) {
         }
         if (tok_is_kw(tok, "const") || tok_is_kw(tok, "volatile") ||
             tok_is_kw(tok, "register") || tok_is_kw(tok, "inline")) {
+            if (tok_is_kw(tok, "inline"))
+                /* gcc2 extern inline 语义：每翻译单元一个副本且不导出
+                 * 外部符号（blk.h 的 end_request 等——否则多文件链接
+                 * 重复定义）。本文件调用解析为本文件静态副本。 */
+                decl_is_static = true;
             tok = tok->next;
+            continue;
+        }
+        if (tok_is_kw(tok, "signed")) {
+            tok = tok->next;   /* 默认即有符号：无操作 */
             continue;
         }
         if (tok_is_kw(tok, "unsigned")) {
@@ -644,10 +677,37 @@ static Type *declspec(void) {
             tok = tok->next;
             continue;
         }
+        if (tok_is_kw(tok, "long")) {
+            /* long / long long / long int / unsigned long ...：32 位同宽 */
+            if (base) {
+                if (base->kind != TY_INT || !base->is_long)
+                    error_at(tok, "invalid type specifier combination");
+            } else {
+                base = ty_long();
+            }
+            tok = tok->next;
+            continue;
+        }
+        if (tok_is_kw(tok, "short")) {
+            /* short / short int / unsigned short：16 位（C89） */
+            if (base) {
+                if (base->kind != TY_INT || base->is_long)
+                    error_at(tok, "invalid type specifier combination");
+                /* int short：保留 short */
+            } else {
+                base = ty_short;
+            }
+            tok = tok->next;
+            continue;
+        }
         if (tok_is_kw(tok, "int")) {
-            if (base)
-                error_at(tok, "duplicate type specifier");
-            base = ty_int;
+            if (base) {
+                if (!base->is_long && base->kind != TY_SHORT)
+                    error_at(tok, "duplicate type specifier");
+                /* long int / short int：保留 long / short */
+            } else {
+                base = ty_int;
+            }
             tok = tok->next;
             continue;
         }
@@ -661,19 +721,26 @@ static Type *declspec(void) {
         if (tok_is_kw(tok, "struct")) {
             if (base)
                 error_at(tok, "duplicate type specifier");
+            /* 成员解析会嵌套调用 declspec（重置 decl_is_* 全局）→ 先保存后恢复 */
+            bool sv_t = decl_is_typedef, sv_s = decl_is_static, sv_e = decl_is_extern;
             base = struct_decl(true);
+            decl_is_typedef = sv_t; decl_is_static = sv_s; decl_is_extern = sv_e;
             continue;
         }
         if (tok_is_kw(tok, "union")) {
             if (base)
                 error_at(tok, "duplicate type specifier");
+            bool sv_t = decl_is_typedef, sv_s = decl_is_static, sv_e = decl_is_extern;
             base = struct_decl(false);
+            decl_is_typedef = sv_t; decl_is_static = sv_s; decl_is_extern = sv_e;
             continue;
         }
         if (tok_is_kw(tok, "enum")) {
             if (base)
                 error_at(tok, "duplicate type specifier");
+            bool sv_t = decl_is_typedef, sv_s = decl_is_static, sv_e = decl_is_extern;
             base = enum_decl();
+            decl_is_typedef = sv_t; decl_is_static = sv_s; decl_is_extern = sv_e;
             continue;
         }
         if (tok->kind == TK_IDENT) {
@@ -690,7 +757,7 @@ static Type *declspec(void) {
     }
 
     if (base && is_unsigned) {
-        if (base->kind != TY_INT && base->kind != TY_CHAR)
+        if (base->kind != TY_INT && base->kind != TY_CHAR && base->kind != TY_SHORT)
             error_at(tok, "'unsigned' applied to non-integer type");
         Type *t = (Type *)calloc(1, sizeof(Type));
         if (!t) { fprintf(stderr, "out of memory\n"); exit(1); }
@@ -718,7 +785,7 @@ static Type *declarator(Type *base, Token **namep) {
         tok = tok->next;
         Type *inner = declarator(base, namep);
         skip(")");
-        return suffix(inner, namep);
+        return paren_suffix(inner, namep);
     }
     while (tok_is(tok, "*")) {
         base = ty_ptr(base);
@@ -729,6 +796,14 @@ static Type *declarator(Type *base, Token **namep) {
         tok = tok->next;
     }
     return suffix(base, namep);
+}
+
+/* 括号声明符后的后缀：括号对后缀透明（`T (*fp)(void)` = 指针到函数）。
+ * 后缀须应用于括号内最内层类型，指针再逐层套回。 */
+static Type *paren_suffix(Type *ty, Token **namep) {
+    if (ty->kind == TY_PTR)
+        return ty_ptr(paren_suffix(ty->base, namep));
+    return suffix(ty, namep);
 }
 
 /* 后缀：数组 [n] 与函数 (params)。函数定义/原型/函数指针共用。 */
@@ -759,8 +834,8 @@ static Type *suffix(Type *base, Token **namep) {
         } else if (tok_is_kw(tok, "void") && tok->next && tok_is(tok->next, ")")) {
             tok = tok->next;   /* 吃 void */
             tok = tok->next;   /* 吃 ) */
-        } else if (tok->kind == TK_IDENT && !is_typename(tok)) {
-            /* K&R 参数名列表 */
+        } else if (tok->kind == TK_IDENT && !is_typename(tok) && !find_tdef(tok)) {
+            /* K&R 参数名列表（typedef 名开头 → ANSI，如 `f(pid_t pid, int sig)`） */
             ft->is_knr = true;
             while (tok->kind == TK_IDENT) {
                 if (n >= 64)
@@ -850,12 +925,21 @@ static Type *struct_decl(bool is_struct) {
             ty->kind = is_struct ? TY_STRUCT : TY_UNION;
             ty->size = 0;               /* 不完整 */
         }
+        /* 先注册 tag（覆盖前向声明的不完整条目）→ 体内自引用
+         * `struct S * p;` 解析到同一类型对象；成员填完后即完整。 */
+        if (tag_tok)
+            add_tag(tag_tok, ty, is_struct ? 0 : 1);
         struct_members(ty);
         skip("}");
-        if (tag_tok && !find_tag(tag_tok, is_struct ? 0 : 1))
-            add_tag(tag_tok, ty, is_struct ? 0 : 1);
     } else if (!ty) {
-        error_at(tok, "incomplete struct/union");
+        /* 前向引用：`struct X;` / `struct X *p;` —— 注册不完整类型。
+         * 指针可声明；变量定义/使用（sizeof）需稍后完整定义（调用方检查 size==0）。 */
+        ty = (Type *)calloc(1, sizeof(Type));
+        if (!ty) { fprintf(stderr, "out of memory\n"); exit(1); }
+        ty->kind = is_struct ? TY_STRUCT : TY_UNION;
+        ty->size = 0;               /* 不完整 */
+        if (tag_tok)
+            add_tag(tag_tok, ty, is_struct ? 0 : 1);
     }
     return ty;
 }
@@ -895,58 +979,68 @@ static void struct_members(Type *ty) {
             continue;
         }
 
-        Token *name = NULL;
-        Type *mty = func_to_ptr(declarator(base, &name));   /* 函数指针成员 */
-        int width = -1;
-        if (tok_is(tok, ":")) {
-            tok = tok->next;
-            width = (int)eval_const(&tok, tok);
+        /* 逗号分隔多成员：同一 base 类型循环解析（`int a, b;` / `int a:3, b:5;`） */
+        for (;;) {
+            Token *name = NULL;
+            Type *mty = func_to_ptr(declarator(base, &name));   /* 函数指针成员 */
+            int width = -1;
+            if (tok_is(tok, ":")) {
+                tok = tok->next;
+                width = (int)eval_const(&tok, tok);
+            }
+            if (!name)
+                error_at(tok, "member name missing");
+            if (mty->kind == TY_VOID)
+                error_at(name, "member of type void");
+
+            Member *m = (Member *)calloc(1, sizeof(Member));
+            if (!m) { fprintf(stderr, "out of memory\n"); exit(1); }
+            m->name = xstrndup(name->loc, (size_t)name->len);
+            m->len = name->len;
+            m->ty = mty;
+            m->bit_offset = -1;
+            m->bit_width = -1;
+
+            if (width >= 0) {
+                if (width == 0) {
+                    in_bf = false;
+                    bitpos = 32;           /* 不占成员 */
+                    free(m);
+                    goto member_done;
+                }
+                if (width > 32)
+                    error_at(name, "bit-field width exceeds 32");
+                if (!in_bf || bitpos + width > 32) {
+                    if (in_bf)
+                        off += 4;          /* 越过旧位域单元 */
+                    off = (off + 3) & ~3;
+                    bitpos = 0;
+                    in_bf = true;
+                }
+                m->offset = off;           /* 单元字节偏移（单元起始） */
+                m->bit_offset = bitpos;    /* 单元内最高位起 */
+                m->bit_width = width;
+                bitpos += width;
+                /* 位域单元本身不推进 off：后续位域同单元复用；
+                 * 非位域/新单元越过（off += 4）。 */
+            } else {
+                if (in_bf) {
+                    off += 4;              /* 越过位域单元 */
+                    in_bf = false;
+                }
+                off = (off + 3) & ~3;      /* 4 对齐（char 成员也 4 对齐——简化） */
+                m->offset = off;
+                off += mty->size;
+            }
+            cur = cur->next = m;
+        member_done:
+            if (tok_is(tok, ",")) {
+                tok = tok->next;
+                continue;                  /* 同一 base 类型下一成员 */
+            }
+            break;
         }
         skip(";");
-        if (!name)
-            error_at(tok, "member name missing");
-        if (mty->kind == TY_VOID)
-            error_at(name, "member of type void");
-
-        Member *m = (Member *)calloc(1, sizeof(Member));
-        if (!m) { fprintf(stderr, "out of memory\n"); exit(1); }
-        m->name = xstrndup(name->loc, (size_t)name->len);
-        m->len = name->len;
-        m->ty = mty;
-        m->bit_offset = -1;
-        m->bit_width = -1;
-
-        if (width >= 0) {
-            if (width == 0) {
-                in_bf = false;
-                bitpos = 32;           /* 不占成员 */
-                continue;
-            }
-            if (width > 32)
-                error_at(name, "bit-field width exceeds 32");
-            if (!in_bf || bitpos + width > 32) {
-                if (in_bf)
-                    off += 4;          /* 越过旧位域单元 */
-                off = (off + 3) & ~3;
-                bitpos = 0;
-                in_bf = true;
-            }
-            m->offset = off;           /* 单元字节偏移（单元起始） */
-            m->bit_offset = bitpos;    /* 单元内最高位起 */
-            m->bit_width = width;
-            bitpos += width;
-            /* 位域单元本身不推进 off：后续位域同单元复用；
-             * 非位域/新单元越过（off += 4）。 */
-        } else {
-            if (in_bf) {
-                off += 4;              /* 越过位域单元 */
-                in_bf = false;
-            }
-            off = (off + 3) & ~3;      /* 4 对齐（char 成员也 4 对齐——简化） */
-            m->offset = off;
-            off += mty->size;
-        }
-        cur = cur->next = m;
     }
     /* 循环在 "}" 处退出，不消费（调用方 struct_decl skip） */
     if (in_bf)
@@ -1155,13 +1249,25 @@ static Node *primary(void) {
         Node *n = new_node(ND_STR, tok);
         n->val = nstrings++;
         n->ty = ty_ptr(ty_char);      /* 字符串 = char* */
-        *str_tail = tok;              /* 收集到程序级链表 */
-        str_tail = &tok->next;
+        *str_tail = tok;              /* 收集到程序级链表（str_next 独立链，
+                                       * 不污染源码流 next） */
+        str_tail = &tok->str_next;
         tok = tok->next;
         return n;
     }
     if (tok->kind == TK_IDENT) {
         Token *t = tok;
+        /* 局部变量优先（遮蔽函数名/全局/枚举——pre_scan_functions 预注册
+         * 了全部函数，函数体内的同名参数/局部必须先行命中） */
+        for (Var *v = vars; v; v = v->next) {
+            if (v->len == tok->len && strncmp(v->name, tok->loc, (size_t)v->len) == 0) {
+                Node *n = new_node(ND_VAR, tok);
+                n->offset = v->offset;
+                n->ty = v->ty;
+                tok = tok->next;
+                return n;
+            }
+        }
         /* 函数调用：ident "(" */
         if (tok->next && tok_is(tok->next, "(")) {
             /* __builtin_va_start(AP, LASTARG)：内建，不发射调用。
@@ -1227,16 +1333,6 @@ static Node *primary(void) {
             n->ty = ty_ptr(f->fty ? f->fty : ty_int);
             tok = tok->next;
             return n;
-        }
-        /* 局部变量 */
-        for (Var *v = vars; v; v = v->next) {
-            if (v->len == tok->len && strncmp(v->name, tok->loc, (size_t)v->len) == 0) {
-                Node *n = new_node(ND_VAR, tok);
-                n->offset = v->offset;
-                n->ty = v->ty;
-                tok = tok->next;
-                return n;
-            }
         }
         /* 全局变量 */
         for (Global *g = globals; g; g = g->next) {
@@ -1363,8 +1459,10 @@ static Node *postfix(void) {
             Token *t = tok;
             bool inc = tok_is(tok, "++");
             tok = tok->next;
-            if (!is_lvalue(n))
+            if (!is_lvalue(n)) {
+                fprintf(stderr, "  DBG postfix inc/dec on kind=%d\n", n->kind);
                 error_at(t, "increment/decrement of non-lvalue");
+            }
             Node *tmp = hidden_lvar(n->ty);
             Node *a1 = new_assign(clone_node(tmp), clone_node(n), t);
             Node *opn = new_binop(inc ? ND_ADD : ND_SUB, clone_node(n),
@@ -1683,9 +1781,21 @@ static Node *assign(void) {
     if (tok_is(tok, "=")) {
         Token *t = tok;
         tok = tok->next;
+        /* gcc 老式扩展：对 lvalue 的强制转换可作赋值目标 `(T) lv = x`
+         * （Linux 0.11 使用，如 fs/exec.c `(char *) page[p/4096] = ...`）。
+         * 目标回退到 lv；值两侧位一致（赋值本就把 x 转换为 lv 类型）。
+         * 注意：仅在 `=` 真正出现时解包——`(T)x` 独立出现时
+         * 转换必须保留（如 `*((char *)p)` 的指针转换）。 */
+        Type *cast_ty = NULL;
+        if (n->kind == ND_CAST && is_lvalue(n->lhs)) {
+            cast_ty = n->ty;
+            n = n->lhs;
+        }
         if (!is_lvalue(n))
             error_at(t, "assignment target is not addressable");
         n = new_assign(n, assign(), t);
+        if (cast_ty)
+            n->ty = cast_ty;   /* 赋值表达式结果类型取转换类型 */
         return n;
     }
     int opkind = 0;
@@ -1962,9 +2072,43 @@ static Node *stmt(void) {
     if (tok_is_kw(tok, "return")) {
         Token *t = tok;
         tok = tok->next;
+        /* 无返回值 return（void 函数）: `return ;` / `return }` */
+        if (tok_is(tok, ";") || tok_is(tok, "}")) {
+            Node *n = new_node(ND_RETURN, t);
+            n->lhs = NULL;
+            if (tok_is(tok, ";"))
+                tok = tok->next;
+            return n;
+        }
         Node *n = new_binary(ND_RETURN, expr(), NULL, t);
         skip(";");
         return n;
+    }
+    if (tok_is_kw(tok, "__asm__") || tok_is_kw(tok, "asm")) {
+        /* 内联汇编（x86 语法）在 SymphonyPlus 上不生成代码：
+         * 整体跳过括号内容（含扩展操作数列表），仅要求分号 */
+        Token *t = tok;
+        tok = tok->next;
+        if (tok_is_kw(tok, "volatile") || tok_is_kw(tok, "__volatile__"))
+            tok = tok->next;
+        skip("(");
+        int depth = 0;
+        for (;;) {
+            if (tok->kind == TK_EOF)
+                error_at(t, "unterminated asm statement");
+            if (tok_is(tok, "("))
+                depth++;
+            else if (tok_is(tok, ")")) {
+                if (depth == 0) {
+                    tok = tok->next;
+                    break;
+                }
+                depth--;
+            }
+            tok = tok->next;
+        }
+        skip(";");
+        return NULL;   /* 空语句 */
     }
     if (is_declspec_start(tok)) {
         return decl_stmt();
@@ -2389,9 +2533,13 @@ static void init_bytes(Token **rest, Token *t, Type *ty,
                 break;
             if (i > 0)
                 skip(",");
+            if (tok_is(tok, "}"))
+                break;   /* 尾部逗号：{, 后无元素 */
             init_bytes(&tok, tok, ty->base, buf + i * ty->base->size,
                        (int)ty->base->size, g);
         }
+        if (tok_is(tok, ","))
+            skip(",");   /* 尾部逗号：循环已满（i==len）时最后元素后的 ',' */
         if (!tok_is(tok, "}"))
             error_at(tok, "too many initializers");
         skip("}");
@@ -2407,6 +2555,8 @@ static void init_bytes(Token **rest, Token *t, Type *ty,
                 break;
             if (m != ty->members)
                 skip(",");
+            if (tok_is(tok, "}"))
+                break;   /* 尾部逗号：{, 后无成员 */
             if (m->bit_width >= 0) {
                 /* 位域：读现有单元，or 入值 */
                 int64_t v = eval_const(&tok, tok);
@@ -2425,6 +2575,8 @@ static void init_bytes(Token **rest, Token *t, Type *ty,
                 init_bytes(&tok, tok, m->ty, buf + m->offset, m->ty->size, g);
             }
         }
+        if (tok_is(tok, ","))
+            skip(",");   /* 尾部逗号：所有成员初始化后的 ',' */
         if (!tok_is(tok, "}"))
             error_at(tok, "too many initializers");
         skip("}");
@@ -2438,6 +2590,8 @@ static void init_bytes(Token **rest, Token *t, Type *ty,
         if (ty->members)
             init_bytes(&tok, tok, ty->members->ty, buf + ty->members->offset,
                        ty->members->ty->size, g);
+        if (tok_is(tok, ","))       /* 尾部逗号：{member,} */
+            tok = tok->next;
         skip("}");
         *rest = tok;
         return;
@@ -2445,14 +2599,20 @@ static void init_bytes(Token **rest, Token *t, Type *ty,
     /* 标量 */
     if (t->kind == TK_STR) {
         /* 字符串地址引用：交错记录（槽偏移 + 字符串编号），占位 0
-         * （codegen 填 @s%d；编号 = 字符串在 str_head 链表中的位置） */
+         * （codegen 填 @s%d；编号 = 字符串在 str_head 链中的位置） */
         if (g) {
             int sidx = 0;
             Token *s;
-            for (s = str_head; s && s != t; s = s->next)
+            for (s = str_head; s && s != t; s = s->str_next)
                 sidx++;
-            if (!s)
-                error_at(t, "string literal not registered");
+            if (!s) {
+                /* 未注册（字符串只出现在初始化器里，未经过 primary 表达式）：
+                 * 现登记到程序级链表（编号 = 当前计数） */
+                sidx = nstrings;
+                nstrings++;
+                *str_tail = t;
+                str_tail = &t->str_next;
+            }
             g->str_relocs = (int *)realloc(g->str_relocs,
                                            (size_t)(2 * (g->n_str_relocs + 1)) * sizeof(int));
             if (!g->str_relocs) { fprintf(stderr, "out of memory\n"); exit(1); }
@@ -2464,22 +2624,169 @@ static void init_bytes(Token **rest, Token *t, Type *ty,
         *rest = t->next;
         return;
     }
-    /* 函数地址初始化器：int (*fp)(int) = add;（地址常量，运行时不可计算） */
-    if (t->kind == TK_IDENT && find_func(t)) {
-        if (g) {
-            if (g->n_func_relocs >= 64)
-                error_at(t, "too many function address initializers");
-            g->func_reloc_offsets[g->n_func_relocs] = (int)(buf - g->init_data);
-            g->func_reloc_names[g->n_func_relocs] = xstrndup(t->loc, (size_t)t->len);
-            g->n_func_relocs++;
+    /* 地址常量初始化器：元素可为"常数额与至多一个地址项之和"：
+     *   (T)&sym / &sym / funcname / &(sym.m) / PAGE_SIZE+(long)&init_task
+     * 符号地址运行时不可计算 → 重定位槽 @name（链接器解析为绝对地址，
+     * 常数额折入加法数）。裸 ident 仅限函数/数组（名字退化为地址）。 */
+    {
+        Token *q = t;
+        int64_t addend = 0;
+        char *addrname = NULL;
+        bool saw_addr = false;
+        bool aok = true;
+        for (;;) {
+            /* 项分隔符：顶层 +/- */
+            int sign = +1;
+            if (tok_is(q, "+")) {
+                q = q->next;
+            } else if (tok_is(q, "-")) {
+                sign = -1;
+                q = q->next;
+            }
+            if (tok_is(q, ",") || tok_is(q, ";") || tok_is(q, "}"))
+                break;
+            if (saw_addr) { aok = false; break; }   /* 地址项后非 +/- → 非和式 */
+
+            /* 跳过 (类型) 转换前缀（平衡括号） */
+            Token *qq = q;
+            while (tok_is(qq, "(") && is_declspec_start(qq->next)) {
+                Token *s = qq->next;
+                int depth = 0;
+                for (;;) {
+                    if (s->kind == TK_EOF)
+                        goto addr_sum_done;
+                    if (tok_is(s, "("))
+                        depth++;
+                    else if (tok_is(s, ")")) {
+                        if (depth == 0) { s = s->next; break; }
+                        depth--;
+                    }
+                    s = s->next;
+                }
+                qq = s;
+            }
+
+            /* 地址项：&sym / &(sym.m) / 裸函数名 / 裸数组名 */
+            bool addr_part = false;
+            bool paren_after = false;
+            if (tok_is(qq, "&")) {
+                Token *s = qq->next;
+                if (tok_is(s, "(")) {       /* &(sym.m)：剥一层括号，链后要求闭合 */
+                    s = s->next;
+                    paren_after = true;
+                }
+                if (s->kind == TK_IDENT && (find_global(s) || find_func(s)))
+                    addr_part = true;
+                qq = s;
+            } else if (qq->kind == TK_IDENT &&
+                       (find_func(qq) ||
+                        (find_global(qq) && find_global(qq)->ty->kind == TY_ARRAY))) {
+                addr_part = true;           /* 裸名（函数 / 数组退化地址） */
+            }
+
+            if (addr_part) {
+                if (saw_addr) { aok = false; break; }
+                Global *gg = find_global(qq);
+                if (!gg && !find_func(qq)) { aok = false; break; }
+                Type *aty = gg ? gg->ty : NULL;
+                Token *qc = qq->next;
+                int64_t a = 0;
+                while (gg && (tok_is(qc, "[") || tok_is(qc, ".") || tok_is(qc, "->"))) {
+                    if (tok_is(qc, "[")) {
+                        if (aty->kind != TY_ARRAY)
+                            error_at(qc, "subscript of non-array in address constant");
+                        Token *sav = tok;
+                        tok = qc->next;
+                        int64_t idx = eval_const(&tok, tok);
+                        qc = tok;
+                        tok = sav;
+                        if (!tok_is(qc, "]"))
+                            error_at(qc, "expected ']' in address constant");
+                        a += idx * aty->base->size;
+                        aty = aty->base;
+                        qc = qc->next;
+                    } else {
+                        if (tok_is(qc, "->")) {
+                            if (aty->kind != TY_PTR)
+                                error_at(qc, "-> on non-pointer in address constant");
+                            aty = aty->base;
+                        }
+                        if (aty->kind != TY_STRUCT && aty->kind != TY_UNION)
+                            error_at(qc, "member of non-aggregate in address constant");
+                        qc = qc->next;
+                        if (qc->kind != TK_IDENT)
+                            error_at(qc, "expected member name in address constant");
+                        Member *m = find_member(aty, qc);
+                        if (!m)
+                            error_at(qc, "no such member in address constant");
+                        a += m->offset;
+                        aty = m->ty;
+                        qc = qc->next;
+                    }
+                }
+                if (paren_after) {          /* &(…) 要求闭合 */
+                    if (!tok_is(qc, ")")) { aok = false; break; }
+                    qc = qc->next;
+                }
+                addend += sign * a;
+                addrname = xstrndup(qq->loc, (size_t)qq->len);
+                saw_addr = true;
+                q = qc;
+                continue;
+            }
+
+            /* 常数额：按顶层 +/- 切块后求值（避免 eval_const 撞上地址项的 &）。
+             * 切块临时截断流（块尾 token 伪装 EOF）确保 eval_const 不越过边界。 */
+            {
+                Token *p = q;
+                int depth = 0;
+                while (p->kind != TK_EOF) {
+                    if (tok_is(p, "(") || tok_is(p, "["))
+                        depth++;
+                    else if (tok_is(p, ")") || tok_is(p, "]"))
+                        depth--;
+                    else if (depth == 0 && (tok_is(p, "+") || tok_is(p, "-")))
+                        break;
+                    p = p->next;
+                }
+                for (Token *u = q; u != p; u = u->next)
+                    if (tok_is(u, "&")) { aok = false; break; }  /* 块内含 & → 非和式 */
+                if (!aok) break;
+                int save_kind = p->kind;
+                p->kind = TK_EOF;
+                Token *sav = tok;
+                tok = q;
+                int64_t v = eval_const(&tok, tok);
+                Token *endpos = tok;
+                p->kind = save_kind;
+                tok = sav;
+                if (endpos != p) { aok = false; break; }
+                addend += sign * v;
+                q = p;
+                continue;
+            }
         }
-        memset(buf, 0, (size_t)bufsz);
-        *rest = t->next;
-        return;
+    addr_sum_done:
+        if (aok && saw_addr && (tok_is(q, ",") || tok_is(q, ";") || tok_is(q, "}"))) {
+            if (g) {
+                if (g->n_func_relocs >= 128)
+                    error_at(t, "too many address initializers");
+                g->func_reloc_offsets[g->n_func_relocs] = (int)(buf - g->init_data);
+                g->func_reloc_names[g->n_func_relocs] = addrname;
+                g->func_reloc_addends[g->n_func_relocs] = (int)addend;
+                g->n_func_relocs++;
+            }
+            memset(buf, 0, (size_t)bufsz);
+            *rest = q;
+            return;
+        }
     }
     int64_t v = eval_const(&tok, tok);
     if (ty->kind == TY_CHAR) {
         buf[0] = (unsigned char)(v & 0xFF);
+    } else if (ty->kind == TY_SHORT) {
+        buf[0] = (unsigned char)((v >> 8) & 0xFF);
+        buf[1] = (unsigned char)(v & 0xFF);
     } else {
         uint32_t w = (uint32_t)(v & 0xFFFFFFFFu);
         buf[0] = (unsigned char)(w >> 24);
@@ -2578,12 +2885,15 @@ Program *parse(Token *toks) {
     /* 类型单例初始化 */
     ty_int = (Type *)calloc(1, sizeof(Type));
     ty_char = (Type *)calloc(1, sizeof(Type));
+    ty_short = (Type *)calloc(1, sizeof(Type));
     ty_void = (Type *)calloc(1, sizeof(Type));
-    if (!ty_int || !ty_char || !ty_void) { fprintf(stderr, "out of memory\n"); exit(1); }
+    if (!ty_int || !ty_char || !ty_short || !ty_void) { fprintf(stderr, "out of memory\n"); exit(1); }
     ty_int->kind = TY_INT;
     ty_int->size = 4;
     ty_char->kind = TY_CHAR;
     ty_char->size = 1;
+    ty_short->kind = TY_SHORT;
+    ty_short->size = 2;
     ty_void->kind = TY_VOID;
     ty_void->size = 1;
     str_head = NULL;
@@ -2652,15 +2962,23 @@ Program *parse(Token *toks) {
 
         /* 多声明器循环：int a, b[3], *c; */
         for (;;) {
-            /* 数组不完整：int a[] = {...} 推断长度 */
+            /* 数组不完整：int a[] = {...} 推断长度；
+             * extern int a[]; 合法——尺寸由其它文件的定义补齐（如
+             * tty.h `extern struct tty_struct tty_table[];`） */
             bool inferred = false;
             if (ty->kind == TY_ARRAY && ty->array_len < 0) {
-                if (!tok_is(tok, "="))
-                    error_at(t, "incomplete array without initializer");
-                tok = tok->next;
-                int len = count_init_elements(&tok, tok, ty->base);
-                ty = ty_array(ty->base, len);
-                inferred = true;   /* count_init_elements 已消费初始化器 */
+                if (!tok_is(tok, "=")) {
+                    if (decl_is_extern) {
+                        ty = ty_array(ty->base, 0);
+                    } else {
+                        error_at(t, "incomplete array without initializer");
+                    }
+                } else {
+                    tok = tok->next;
+                    int len = count_init_elements(&tok, tok, ty->base);
+                    ty = ty_array(ty->base, len);
+                    inferred = true;   /* count_init_elements 已消费初始化器 */
+                }
             }
             if (ty->kind == TY_STRUCT && ty->size == 0 && !decl_is_extern)
                 error_at(t, "incomplete struct variable");

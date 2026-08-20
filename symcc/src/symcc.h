@@ -35,6 +35,7 @@ typedef struct Token {
     int str_len;     /* TK_STR 字节数 */
     bool is_unsigned; /* TK_NUM：u/U 后缀 */
     bool at_bol;     /* 位于其源码行的行首（预处理器用） */
+    struct Token *str_next; /* TK_STR：程序级字符串链（独立于源码流 next） */
 } Token;
 
 Token *tokenize(const char *p);
@@ -82,9 +83,10 @@ struct Member {
 
 typedef struct Type Type;
 struct Type {
-    enum { TY_INT, TY_CHAR, TY_PTR, TY_VOID, TY_ARRAY, TY_STRUCT, TY_UNION, TY_FUNC } kind;
+    enum { TY_INT, TY_CHAR, TY_SHORT, TY_PTR, TY_VOID, TY_ARRAY, TY_STRUCT, TY_UNION, TY_FUNC } kind;
     Type *base;          /* PTR: 指向的类型；ARRAY: 元素类型；FUNC: 返回类型 */
     bool is_unsigned;    /* 供有符号/无符号除法、比较、右移区分 */
+    bool is_long;        /* long/long long（32 位平台与 int 同宽；打印/诊断区分） */
     int64_t array_len;   /* TY_ARRAY：元素数；-1 = 不完整（extern/形参/推断） */
     Member *members;     /* TY_STRUCT/TY_UNION */
     int size;            /* 布局字节数（STRUCT/UNION 4 对齐；ARRAY 元素总字节） */
@@ -97,7 +99,7 @@ struct Type {
     bool is_variadic;    /* 含 "..." */
 };
 
-extern Type *ty_int, *ty_char, *ty_void;   /* 单例（parse.c） */
+extern Type *ty_int, *ty_char, *ty_short, *ty_void;   /* 单例（parse.c） */
 Type *ty_ptr(Type *base);                  /* 指针类型（新建） */
 
 /* ---------- 语法 ---------- */
@@ -202,9 +204,11 @@ typedef struct Global {
      * 交错数组：str_relocs[2k] = 槽偏移（4 对齐），str_relocs[2k+1] = 字符串编号 */
     int *str_relocs;
     int n_str_relocs;  /* reloc 对数 */
-    /* 初始化器中的函数地址引用（4 字节槽 → 函数 label @name）。 */
-    char *func_reloc_names[64];   /* 函数名 */
-    int func_reloc_offsets[64];   /* 槽偏移（4 对齐） */
+    /* 初始化器中的函数/全局地址引用（4 字节槽 → label @name，可带加法数）。
+     * 加法数：&g[0].member 等地址常量表达式的编译期偏移（0 = 无）。 */
+    char *func_reloc_names[128];  /* 符号名（sys_call_table 72 项上限） */
+    int func_reloc_offsets[128];  /* 槽偏移（4 对齐） */
+    int func_reloc_addends[128];  /* 加法数（0 = 无） */
     int n_func_relocs;            /* reloc 数 */
 } Global;
 

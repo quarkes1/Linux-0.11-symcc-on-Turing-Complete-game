@@ -229,6 +229,24 @@ static Token *chain_tail(Token *t) {
     return t;
 }
 
+/* 相邻字符串字面量合并（C89 翻译阶段 6）。宏展开可产生相邻字符串
+ * （如 DEVICE_NAME ": free..." → "floppy" ": free..."）。tok_dup 浅拷贝
+ * str（与宏定义体共享），故只换新缓冲、不释放任何旧内存。 */
+static void merge_adjacent_strings(Token *head) {
+    for (Token *t = head; t; t = t->next) {
+        while (t->kind == TK_STR && t->next && t->next->kind == TK_STR) {
+            Token *s = t->next;
+            char *nb = (char *)xmalloc((size_t)(t->str_len + s->str_len));
+            memcpy(nb, t->str, (size_t)t->str_len);
+            memcpy(nb + t->str_len, s->str, (size_t)s->str_len);
+            t->str = nb;
+            t->str_len += s->str_len;
+            t->len = t->str_len + 2;
+            t->next = s->next;   /* 不释放：str 可能与宏定义体共享 */
+        }
+    }
+}
+
 /* 返回 t 所在行的最后一个 token（下一个 at_bol token 的前一个；t 须为本行 token） */
 static Token *line_end(Token *t) {
     while (t->next->kind != TK_EOF && !tok_at_bol(t->next))
@@ -1334,6 +1352,7 @@ static Token *pp_tokens(Token *tok, const char *src_name,
         fprintf(stderr, "unterminated #if (missing #endif)\n");
         exit(1);
     }
+    merge_adjacent_strings(head.next);
     append1(&out, &out2, tok_dup(t));   /* 结尾 EOF token */
     return head.next;
 }

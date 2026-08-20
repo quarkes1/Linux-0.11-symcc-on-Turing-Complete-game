@@ -147,6 +147,33 @@ int create_block(struct m_inode * inode, int block)
 	return _bmap(inode,block,1);
 }
 		
+/* SYMPLUS-PORT: inode slot allocation deferred to M3 -> stub (callers
+ * handle NULL) */
+struct m_inode * new_inode(int dev)
+{
+	return NULL;
+}
+
+/* SYMPLUS-PORT: free_inode body restored for M2 kernel linking (inode
+ * slot release only; free-inode list management deferred to M3 memory
+ * work). The original tree referenced this symbol without defining it. */
+void free_inode(struct m_inode * inode)
+{
+	int i;
+	if (!inode)
+		return;
+	if (inode->i_count != 1) {
+		printk("trying to free inode with count=%d
+",inode->i_count);
+		return;
+	}
+	inode->i_count = 0;
+	inode->i_dirt = 0;
+	inode->i_nlinks = 0;
+	for (i = 0; i < 8; i++)
+		inode->i_zone[i] = 0;
+}
+
 void iput(struct m_inode * inode)
 {
 	if (!inode)

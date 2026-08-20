@@ -19,6 +19,23 @@
 #include <asm/segment.h>
 #include <asm/io.h>
 
+/* SYMPLUS-PORT: x86 segment register / user segment access (asm.s
+ * assembly symbols) -> stubs; the oops dump fields are informational */
+static unsigned long _fs(void)
+{
+	return 0;
+}
+
+static unsigned char get_seg_byte(unsigned short seg, unsigned char *addr)
+{
+	return 0;
+}
+
+static unsigned long get_seg_long(unsigned short seg, unsigned long *addr)
+{
+	return 0;
+}
+
 /* SYMPLUS-PORT: fs-segment read -> plain memory */
 
 /* SYMPLUS-PORT: fs-segment read -> plain memory */

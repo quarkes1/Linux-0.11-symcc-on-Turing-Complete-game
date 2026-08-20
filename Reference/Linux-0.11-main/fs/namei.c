@@ -63,17 +63,17 @@ static int permission(struct m_inode * inode,int mask)
 static int match(int len,const char * name,struct dir_entry * de)
 {
 	register int same;
+	int i;
 
 	if (!de || !de->inode || len > NAME_LEN)
 		return 0;
 	if (len < NAME_LEN && de->name[len])
 		return 0;
-	/* SYMPLUS-PORT: cld;rep;movsl -> loop */
-		"fs ; repe ; cmpsb\n\t"
-		"setz %%al"
-		:"=a" (same)
-		:"0" (0),"S" ((long) name),"D" ((long) de->name),"c" (len)
-		:"cx","di","si");
+	/* SYMPLUS-PORT: cld;rep;movsl -> loop（字节比较，repe cmpsb 语义） */
+	same = 1;
+	for (i = 0; i < len; i++)
+		if (name[i] != de->name[i])
+			same = 0;
 	return same;
 }
 

@@ -303,8 +303,15 @@ void bread_page(unsigned long address,int dev,int b[4])
 	for (i=0 ; i<4 ; i++,address += BLOCK_SIZE)
 		if (bh[i]) {
 			wait_on_buffer(bh[i]);
-			if (bh[i]->b_uptodate)
-				COPYBLK((unsigned long) bh[i]->b_data,address);
+			if (bh[i]->b_uptodate) {
+				/* SYMPLUS-PORT: COPYBLK (x86 rep movsl inline asm,
+				 * removed with the note above) -> C 32-bit copy loop */
+				unsigned long * s = (unsigned long *) bh[i]->b_data;
+				unsigned long * d = (unsigned long *) address;
+				int __i;
+				for (__i = 0; __i < BLOCK_SIZE / 4; __i++)
+					d[__i] = s[__i];
+			}
 			brelse(bh[i]);
 		}
 }

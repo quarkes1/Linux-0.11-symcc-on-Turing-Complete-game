@@ -146,3 +146,9 @@ int find_empty_process(void)
 	return -EAGAIN;
 }
 
+/* SYMPLUS-PORT: sys_fork was dropped when the inline-asm fork path was
+ * trimmed; restore the plain C wrapper (sys_call_table references it). */
+int sys_fork(void)
+{
+	return copy_process(0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0);
+}

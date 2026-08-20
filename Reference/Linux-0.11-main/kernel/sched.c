@@ -382,6 +382,11 @@ int sys_nice(long increment)
 	return 0;
 }
 
+/* SYMPLUS-PORT: gdt was defined in head.s (x86 asm, not built here);
+ * provide the table as data — real GDT setup arrives in M3.
+ * Explicit zero-init keeps it out of the low 64KB bss (J16 limit). */
+desc_table gdt = {{0,0}};
+
 void sched_init(void)
 {
 	int i;

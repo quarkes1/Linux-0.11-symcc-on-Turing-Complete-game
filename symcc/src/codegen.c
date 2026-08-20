@@ -29,6 +29,7 @@
 
 static Obj *cur_obj;       /* 当前对象（codegen 输出目标） */
 static bool obj_d32;       /* d32：数据引用拆 32 位装载 */
+static Program *cur_prog;  /* 全局表查询（ref_needs_d32 按符号类别选形态） */
 static bool in_data;       /* 当前段：true=.data（emit 分派） */
 static int label_cnt;
 static Func *cur_func;   /* 当前生成函数（__builtin_va_start / 参数复制用） */
@@ -124,6 +125,26 @@ static void gen_member_addr(Node *n);
 static void gen_laddr(Node *n);
 static void gen_branch_zero(Node *cond, const char *label, bool jump_if_zero);
 
+/* 地址引用形态（大程序支持——链接器布局：bss 在低区 < 64KB，
+ * data/text > 64KB）：本文件已定义且未初始化的变量（bss）→ D16 直接
+ * 装载；其余（data 变量、extern、函数、字符串）→ D32 拆装
+ * （@hi + lsl 16 + or @lo）。extern 声明（is_extern=true, init_data=NULL）
+ * 目标可能在别的文件的 data 段（高区），必须 D32。 */
+static bool ref_needs_d32(const char *name) {
+    for (Global *g = cur_prog->globals; g; g = g->next)
+        if ((size_t)g->len == strlen(name) && strncmp(g->name, name, (size_t)g->len) == 0)
+            return g->init_data != NULL || g->is_extern;
+    return true;                           /* 未定义（extern）→ 高区可能 */
+}
+
+/* D32 拆装装载到 r9：mov @hi + lsl 16 + or @lo（name 为符号名，如
+ * "task" / "s12"；@hi:@lo 前缀由链接器解析为半字立即数） */
+static void emit_addr32(const char *name, const char *comment) {
+    emit("    mov r9, @hi:%s    ; %s (hi)\n", name, comment);
+    emit("    lsl r9, r9, 16\n");
+    emit("    or r9, r9, @lo:%s ; %s (lo)\n", name, comment);
+}
+
 /* 左值地址 → r9。局部变量相对帧基址 r10（函数入口 sp）——push/pop 会
  * 改变 sp，若相对 sp 则压栈后变量错位；全局/字符串 = label 地址。 */
 static void gen_laddr(Node *n) {
@@ -132,11 +153,8 @@ static void gen_laddr(Node *n) {
         emit("    sub r9, r10, %d    ; addr of var\n", -n->offset);
         return;
     case ND_GVAR:
-        if (obj_d32) {
-            /* 32 位数据地址：mov @hi + lsl 16 + or @lo */
-            emit("    mov r9, @hi:%s    ; addr of global (hi)\n", n->name);
-            emit("    lsl r9, r9, 16\n");
-            emit("    or r9, r9, @lo:%s ; addr of global (lo)\n", n->name);
+        if (obj_d32 || ref_needs_d32(n->name)) {
+            emit_addr32(n->name, "addr of global");
         } else {
             emit("    mov r9, @%s        ; addr of global\n", n->name);
         }
@@ -218,22 +236,29 @@ static void gen_store_bitfield(Node *n) {
     emit("    store_32 [r9], r2\n");
 }
 
-/* 按类型从 [r9] 加载到 r1：char 符号扩展（unsigned char 零扩展） */
+/* 按类型从 [r9] 加载到 r1：char/short 符号扩展（unsigned 零扩展） */
 static void gen_load(Type *t) {
     if (t->kind == TY_CHAR) {
         emit("    load_8 r1, [r9]     ; char\n");
         emit("    lsl r1, r1, 24\n");
         emit("    %s r1, r1, 24   ; %s扩展\n",
                 t->is_unsigned ? "lsr" : "asr", t->is_unsigned ? "零" : "符号");
+    } else if (t->kind == TY_SHORT) {
+        emit("    load_16 r1, [r9]    ; short\n");
+        emit("    lsl r1, r1, 16\n");
+        emit("    %s r1, r1, 16   ; %s扩展\n",
+                t->is_unsigned ? "lsr" : "asr", t->is_unsigned ? "零" : "符号");
     } else {
         emit("    load_32 r1, [r9]    ; load\n");
     }
 }
 
-/* 按类型把 r1 存入 [r9]：char 用 store_8（天然截断低 8 位） */
+/* 按类型把 r1 存入 [r9]：char/short 用窄 store（天然截断低位） */
 static void gen_store(Type *t) {
     if (t->kind == TY_CHAR)
         emit("    store_8 [r9], r1    ; char\n");
+    else if (t->kind == TY_SHORT)
+        emit("    store_16 [r9], r1   ; short\n");
     else
         emit("    store_32 [r9], r1   ; store\n");
 }
@@ -305,14 +330,24 @@ static void gen_expr(Node *n) {
         gen_load(n->ty);
         return;
     case ND_FUNC:
-        emit("    mov r1, @%s        ; func addr\n", n->name);
+        /* 函数在 text（>64KB）→ D32 拆装 */
+        emit_addr32(n->name, "func addr");
+        emit("    mov r1, r9          ; func addr\n");
         return;
-    case ND_STR:
-        emit("    mov r1, @s%lld      ; string\n", (long long)n->val);
+    case ND_STR: {
+        char nm[32];
+        snprintf(nm, sizeof nm, "s%lld", (long long)n->val);
+        /* 字符串在 data（>64KB）→ D32 拆装 */
+        emit_addr32(nm, "string");
+        emit("    mov r1, r9          ; string\n");
         return;
+    }
     case ND_ADDR:
         if (n->lhs->kind == ND_STR) {
-            emit("    mov r1, @s%lld     ; addr of string\n", (long long)n->lhs->val);
+            char nm[32];
+            snprintf(nm, sizeof nm, "s%lld", (long long)n->lhs->val);
+            emit_addr32(nm, "addr of string");
+            emit("    mov r1, r9          ; addr of string\n");
             return;
         }
         gen_laddr(n->lhs);
@@ -352,6 +387,12 @@ static void gen_expr(Node *n) {
             /* 截断到 8 位 + 符号/零扩展 */
             emit("    lsl r1, r1, 24     ; cast char\n");
             emit("    %s r1, r1, 24   ; %s扩展\n",
+                    n->ty->is_unsigned ? "lsr" : "asr",
+                    n->ty->is_unsigned ? "零" : "符号");
+        } else if (n->ty->kind == TY_SHORT) {
+            /* 截断到 16 位 + 符号/零扩展 */
+            emit("    lsl r1, r1, 16     ; cast short\n");
+            emit("    %s r1, r1, 16   ; %s扩展\n",
                     n->ty->is_unsigned ? "lsr" : "asr",
                     n->ty->is_unsigned ? "零" : "符号");
         }
@@ -578,13 +619,15 @@ static void gen_stmts(Node *n) {
 static void gen_stmt(Node *n) {
     switch (n->kind) {
     case ND_RETURN:
-        if (n->lhs && is_agg(n->lhs->ty)) {
-            /* struct/union 返回：拷贝到隐藏返回缓冲区 [r10+8] */
-            gen_expr(n->lhs);            /* r1 = 源地址 */
-            emit("    add r9, r10, 8       ; retbuf\n");
-            gen_block_copy(n->lhs->ty->size);
-        } else {
-            gen_expr(n->lhs);
+        if (n->lhs) {
+            if (is_agg(n->lhs->ty)) {
+                /* struct/union 返回：拷贝到隐藏返回缓冲区 [r10+8] */
+                gen_expr(n->lhs);            /* r1 = 源地址 */
+                emit("    add r9, r10, 8       ; retbuf\n");
+                gen_block_copy(n->lhs->ty->size);
+            } else {
+                gen_expr(n->lhs);
+            }
         }
         emit("    ; return\n");
         emit("    mov sp, r10\n");
@@ -800,18 +843,25 @@ static void emit_data(Program *prog) {
                     break;
                 }
             if (sidx >= 0) {
-                emit("    U32 @s%d\n", sidx);
+                /* 字符串在 data 段（>64KB）：完整 32 位地址指针 */
+                emit("    U32 @32:s%d\n", sidx);
                 continue;
             }
-            /* 函数地址 reloc 槽 → 引用 label @name */
+            /* 函数地址 reloc 槽 → 引用 label @name（可带加法数） */
             const char *fname = NULL;
+            int faddend = 0;
             for (int k = 0; k < g->n_func_relocs; k++)
                 if (g->func_reloc_offsets[k] == off) {
                     fname = g->func_reloc_names[k];
+                    faddend = g->func_reloc_addends[k];
                     break;
                 }
             if (fname) {
-                emit("    U32 @%s\n", fname);
+                /* 函数在 text 段（>64KB）：完整 32 位地址指针 */
+                if (faddend)
+                    emit("    U32 @32:%s + 0x%lx\n", fname, (long)faddend);
+                else
+                    emit("    U32 @32:%s\n", fname);
                 continue;
             }
             emit("    U32 0x%02x%02x%02x%02x\n",
@@ -822,12 +872,17 @@ static void emit_data(Program *prog) {
             emit("    U8 %d\n", g->init_data[off]);
     }
     int idx = 0;
-    for (Token *t = prog->strs; t; t = t->next) {
+    for (Token *t = prog->strs; t; t = t->str_next) {
         emit("\ns%d:\n", idx++);
-        /* 含 NUL 或引号的字符串不能用 "..." 原样发射（汇编器按引号/字节扫），
-         * 退回逐字节 U8；其余用 "..." + 结尾 U8 0 */
-        if (memchr(t->str, 0, (size_t)t->str_len) ||
-            memchr(t->str, '"', (size_t)t->str_len)) {
+        /* 含 NUL/引号/控制字符（\n \r \t 等）的字符串不能用 "..." 原样发射
+         * （行结构被破坏：换行截断、引号提前闭合），退回逐字节 U8；
+         * 其余用 "..." + 结尾 U8 0 */
+        bool raw_ok = true;
+        for (int i = 0; i < t->str_len; i++) {
+            unsigned char b = (unsigned char)t->str[i];
+            if (b == 0 || b == '"' || b < 0x20) { raw_ok = false; break; }
+        }
+        if (!raw_ok) {
             for (int i = 0; i < t->str_len; i++)
                 emit("    U8 %d\n", (unsigned char)t->str[i]);
         } else {
@@ -842,6 +897,7 @@ bool codegen(Program *prog, Obj *obj, bool d32) {
      * 保留（@name/@hi:@lo/call label），布局由链接器完成 */
     cur_obj = obj;
     obj_d32 = d32;
+    cur_prog = prog;
     in_data = false;
     label_cnt = 0;
 

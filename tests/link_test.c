@@ -53,11 +53,15 @@ static void test_obj_roundtrip(void) {
     obj_free(o); obj_free(o2);
 }
 
-/* codegen 输出形态：符号行 + 数据引用形态（D16 / d32 时 @hi:/@lo:） */
+/* codegen 输出形态：符号行 + 数据引用形态。
+ * 引用形态按符号类别：bss（本文件、未初始化）→ D16 @name；data 变量 /
+ * extern / 函数 → D32 拆装 @hi:/@lo:（链接布局 data/text > 64KB，
+ * D16 imm16 溢出）。d32=true 强制全部 D32。 */
 static void test_codegen_obj_form(void) {
     Token *tok = tokenize(
-        "int g = 5;\n"
-        "int f(int a) { return a + g; }\n"
+        "int g;\n"                        /* bss → D16 */
+        "int h = 5;\n"                    /* data → D32 */
+        "int f(int a) { return a + g + h; }\n"
         "int main(void) { return f(1); }\n");
     Program *prog = parse(tok);
     Obj *o = obj_new();
@@ -69,18 +73,18 @@ static void test_codegen_obj_form(void) {
     for (s = o->syms; s; s = s->next)
         if (strcmp(s->name, "g") == 0) break;
     CHECK(s != NULL && s->is_data);
-    int nref = 0, nd32 = 0, i;
+    int ng16 = 0, nh32 = 0, i;
     for (i = 0; i < o->n_text; i++) {
-        if (strstr(o->text_lines[i], "@g")) nref++;
-        if (strstr(o->text_lines[i], "@hi:g")) nd32++;
+        if (strstr(o->text_lines[i], "@g")) ng16++;
+        if (strstr(o->text_lines[i], "@hi:h")) nh32++;
     }
-    CHECK(nref > 0 && nd32 == 0);
+    CHECK(ng16 > 0 && nh32 > 0);   /* bss→D16，data→D32 */
     Obj *o2 = obj_new();
     CHECK(codegen(prog, o2, true));
-    nd32 = 0;
+    int ng32 = 0;
     for (i = 0; i < o2->n_text; i++)
-        if (strstr(o2->text_lines[i], "@hi:g")) nd32++;
-    CHECK(nd32 > 0);
+        if (strstr(o2->text_lines[i], "@hi:g")) ng32++;
+    CHECK(ng32 > 0);               /* d32=true 强制全部 D32 */
     obj_free(o); obj_free(o2);
 }
 
