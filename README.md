@@ -54,9 +54,11 @@ bash scripts/build_kernel.sh    # 50 个内核 .c → symcc → symld → kernel
 ## 在游戏里运行你的 C 程序
 
 1. 主机编译：`./symcc/symcc.exe main.c runtime/tty.c runtime/divsi3.c -o out.asm`（屏幕输出需链接 tty.c，见「使用教程」）
-2. 复制 `out.asm` 全文
-3. 游戏沙盒：主内存 RAM 右键 **"Edit assembly"** → 粘贴 → 运行
-   （屏幕组件需链接到主内存；RAM 与 DiskA 均为 **Big endian**、8 MB）
+2. 游戏内加载，两种方式任选：
+   - 把 `out.asm` 全文粘贴进 RAM 的 **"Edit assembly"**（游戏汇编器现场汇编）
+   - 或先 `./emu/asm.exe out.asm out.bin`，把 RAM 的"外部文件"指向 `out.bin`
+     （文件模式**原样装载字节、不做汇编**，必须喂 .bin 机器码而不是 .asm 源码）
+3. 运行（屏幕组件需链接到主内存；RAM 与 DiskA 均为 **Big endian**、8 MB）
 4. 屏幕输出即为程序结果（M1 验收：左上角显示 Hello）
 
 ## 使用教程
@@ -86,7 +88,11 @@ int main() {
 ./emu/emu.exe hello.bin              # 模拟执行，打印 exit_code = 42
 ```
 
-然后把 `hello.asm` 全文粘贴进游戏 RAM（见上一节）。
+游戏内加载两种方式（见上一节）：
+- 粘贴 `hello.asm` 全文 → 游戏汇编器现场汇编
+- RAM "外部文件"指向 `hello.bin` → 原样装载字节。文件模式不做汇编，喂 .asm 源码
+  会把文本字节直接装进内存（与汇编结果完全不同）；务必用 `emu/asm.exe` 生成的
+  .bin（大端 32 位指令字，与游戏 RAM 格式一致）
 
 要点：
 - **屏幕输出要链接 `runtime/tty.c`**，并同时带上 **`runtime/divsi3.c`** —— `putchar` 内部用 `%` 换行，缺 `divsi3.c` 时链接报 `undefined jump target: __modsi3`
