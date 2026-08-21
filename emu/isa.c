@@ -71,7 +71,7 @@ const Insn isa_table[] = {
     { "mul",  1, {0x2B000000}, {0xFF00F0FF}, {{REG(20), REG(16), REG(8)}}, 3 },
     { "div",  1, {0x2C000000}, {0xFF00F0FF}, {{REG(20), REG(16), REG(8)}}, 3 },
     { "mod",  1, {0x2D000000}, {0xFF00F0FF}, {{REG(20), REG(16), REG(8)}}, 3 },
-    { "cmp",  1, {0x2A000000}, {0xFFF0F0FF},       /* cmp %a, %b */
+    { "cmp",  1, {0x2AF00000}, {0xFFF0F0FF},       /* cmp %a, %b：byte1=1111 aaaa（游戏解码器依赖前缀） */
       {{REG(16), REG(8), NONE}}, 2 },
 
     /* ---------- ALU 三操作数 imm（13） ---------- */
@@ -88,7 +88,7 @@ const Insn isa_table[] = {
     { "mul",  1, {0x3B000000}, {0xFF000000}, {{REG(20), REG(16), IMM(0)}}, 3 },
     { "div",  1, {0x3C000000}, {0xFF000000}, {{REG(20), REG(16), IMM(0)}}, 3 },
     { "mod",  1, {0x3D000000}, {0xFF000000}, {{REG(20), REG(16), IMM(0)}}, 3 },
-    { "cmp",  1, {0x3A000000}, {0xFFF00000},       /* cmp %a, %b */
+    { "cmp",  1, {0x3AF00000}, {0xFFF00000},       /* cmp %a, %b：byte1=1111 aaaa（游戏解码器依赖前缀） */
       {{REG(16), IMM(0), NONE}}, 2 },
 
     /* ---------- 跳转（12） ---------- */

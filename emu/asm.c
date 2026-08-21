@@ -99,8 +99,12 @@ static int add_label(const char *name, uint32_t off, int lineno, AsmError *err) 
     }
     for (int i = 0; i < nlabels; i++)
         if (strcmp(labels[i].name, name) == 0) {
-            set_err(err, lineno, "duplicate label '%s'", name);
-            return -1;
+            /* 重复 label：保留首个（first-wins），与游戏汇编器容忍行为一致。
+             * 链接器桩化后重复的静态函数名已无 label 引用（调用走池绝对地址），
+             * 如内核的 init（init/main.c 与 chr_drv 各有一个）。 */
+            fprintf(stderr, "asm: warning: duplicate label '%s' (line %d, keeping first)\n",
+                    name, lineno);
+            return 0;
         }
     if (nlabels >= MAX_LABELS) {
         set_err(err, lineno, "too many labels (max %d)", MAX_LABELS);
