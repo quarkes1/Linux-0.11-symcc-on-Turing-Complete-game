@@ -20,8 +20,9 @@
  * won't be any messing with the stack from main(), but we define
  * some others too.
  */
+/* SYMPLUS-PORT: M3 pause 的 inline _syscall 声明已删（main() 不再 pause）；
+ * fork 保留——init() 仍引用（main 在停机点返回，init 为死代码），M4/M5 再重构 */
 static inline _syscall0(int,fork)
-static inline _syscall0(int,pause)
 static inline _syscall1(int,setup,void *,BIOS)
 static inline _syscall0(int,sync)
 
@@ -42,6 +43,7 @@ static inline _syscall0(int,sync)
 static char printbuf[1024];
 
 extern int vsprintf();
+extern int printk(const char *fmt, ...);
 extern void init(void);
 extern void blk_dev_init(void);
 extern void chr_dev_init(void);
@@ -122,28 +124,34 @@ void main(void)		/* This really IS void, no error here. */
 	main_memory_start += rd_init(main_memory_start, RAMDISK*1024);
 #endif
 	mem_init(main_memory_start,memory_end);
+	printk("mem_init OK\n");
 	trap_init();
+	printk("trap_init OK (stub)\n");
 	blk_dev_init();
+	printk("blk_dev_init OK\n");
 	chr_dev_init();
+	printk("chr_dev_init OK\n");
 	tty_init();
+	printk("tty_init OK\n");
 	time_init();
+	printk("time_init OK (stub)\n");
 	sched_init();
+	printk("sched_init OK (stub)\n");
 	buffer_init(buffer_memory_end);
+	printk("buffer_init OK\n");
 	hd_init();
+	printk("hd_init OK (stub)\n");
 	floppy_init();
+	printk("floppy_init OK (stub)\n");
 	sti();
-	move_to_user_mode();
-	if (!fork()) {		/* we count on this going ok */
-		init();
-	}
-/*
- *   NOTE!!   For any other task 'pause()' would mean we have to get a
- * signal to awaken, but task0 is the sole exception (see 'schedule()')
- * as task 0 gets activated at every idle moment (when no other tasks
- * can run). For task0 'pause()' just means we go check if some other
- * task can run, and if not we return here.
- */
-	for(;;) pause();
+	move_to_user_mode();		/* 空 stub */
+	/* SYMPLUS-PORT: M3 最小启动——fork/调度属 M4/M5，此处停机。
+	 * 不用 for(;;)：symld 把用户代码的自跳转桩化为 load->jmp 乒乓循环，
+	 * 模拟器按"目标==pc"判定停机将永不触发（2026-08-23 实测超限）。
+	 * main() 返回后由 crt0 尾部链接器统一输出的 "halt: jmp halt" 自跳
+	 * 停机——与全部既有端到端测试同一机制；游戏内表现为空转不冻结。 */
+	printk("\nBoot complete. Halting.\n");
+	return;
 }
 
 static int printf(const char *fmt, ...)
