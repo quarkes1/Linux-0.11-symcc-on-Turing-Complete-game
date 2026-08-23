@@ -109,6 +109,12 @@ void main(void)		/* This really IS void, no error here. */
  */
  	ROOT_DEV = ORIG_ROOT_DEV;
  	drive_info = DRIVE_INFO;
+	/* SYMPLUS-PORT: M3 —— 控制台初始化前置。tty_table 静态初始化已含
+	 * write=con_write，但 con_init 设定的 pos/origin 要到 tty_init 才执行；
+	 * 若按原顺序（第 5 个 init），前 4 行 printk 会以 pos=0 写到低内存
+	 * （文字池/crt0 区）。此处提前到第一条 printk 之前（set_intr_gate
+	 * 为空宏、rs_init 无副作用，可安全前置），日志顺序不变。 */
+	tty_init();
 	memory_end = (1<<20) + (EXT_MEM_K<<10);
 	memory_end &= 0xfffff000;
 	if (memory_end > 16*1024*1024)
@@ -131,7 +137,7 @@ void main(void)		/* This really IS void, no error here. */
 	printk("blk_dev_init OK\n");
 	chr_dev_init();
 	printk("chr_dev_init OK\n");
-	tty_init();
+	/* tty_init() 已前置到 main() 开头（控制台先于第一条 printk 就绪） */
 	printk("tty_init OK\n");
 	time_init();
 	printk("time_init OK (stub)\n");

@@ -10,7 +10,7 @@ EMU_HDR := emu/isa.h emu/asm.h emu/emu.h
 SYMCC_SRC := symcc/src/main.c symcc/src/tokenize.c symcc/src/parse.c symcc/src/codegen.c symcc/src/compile.c symcc/src/preprocess.c symcc/src/obj.c symcc/src/link.c
 SYMCC_LIB := symcc/src/tokenize.c symcc/src/parse.c symcc/src/codegen.c symcc/src/compile.c symcc/src/preprocess.c symcc/src/obj.c symcc/src/link.c
 
-all: emu/asm.exe emu/emu.exe tests/asm_test.exe tests/emu_test.exe symcc/symcc.exe symld/symld.exe tests/run_tests.exe tests/preproc_test.exe tests/link_test.exe
+all: emu/asm.exe emu/emu.exe tests/asm_test.exe tests/emu_test.exe symcc/symcc.exe symld/symld.exe tests/run_tests.exe tests/preproc_test.exe tests/link_test.exe tests/kernel_boot_test.exe
 
 symcc/symcc.exe: $(SYMCC_SRC) symcc/src/symcc.h $(EMU_SRC) $(EMU_HDR)
 	$(CC) $(CFLAGS) -o $@ $(SYMCC_SRC) $(EMU_SRC)
@@ -23,6 +23,9 @@ tests/run_tests.exe: tests/run_tests.c $(EMU_SRC) $(EMU_HDR) $(SYMCC_LIB) symcc/
 
 tests/link_test.exe: tests/link_test.c $(SYMCC_LIB) $(EMU_SRC) $(EMU_HDR) symcc/src/symcc.h symcc/src/link.h
 	$(CC) $(CFLAGS) -o $@ tests/link_test.c $(SYMCC_LIB) $(EMU_SRC)
+
+tests/kernel_boot_test.exe: tests/kernel_boot_test.c $(EMU_SRC) $(EMU_HDR)
+	$(CC) $(CFLAGS) -o $@ tests/kernel_boot_test.c $(EMU_SRC)
 
 symld/symld.exe: symld/symld.c symcc/src/obj.c symcc/src/link.c symcc/src/obj.h symcc/src/link.h $(EMU_SRC) $(EMU_HDR)
 	$(CC) $(CFLAGS) -o $@ symld/symld.c symcc/src/obj.c symcc/src/link.c $(EMU_SRC)
@@ -39,12 +42,16 @@ tests/asm_test.exe: tests/asm_test.c $(EMU_SRC) $(EMU_HDR)
 tests/emu_test.exe: tests/emu_test.c $(EMU_SRC) $(EMU_HDR)
 	$(CC) $(CFLAGS) -o $@ tests/emu_test.c $(EMU_SRC)
 
-test: all
+test: all build/kernel.bin
 	tests/asm_test.exe
 	tests/emu_test.exe
 	tests/run_tests.exe
 	tests/preproc_test.exe
 	tests/link_test.exe
+	tests/kernel_boot_test.exe
+
+build/kernel.bin:
+	bash scripts/build_kernel.sh
 
 clean:
 	rm -f emu/*.exe tests/*.exe symcc/symcc.exe symld/symld.exe

@@ -87,7 +87,11 @@ static void sysbeep(void);
 /* NOTE! gotoxy thinks x==video_num_columns is ok */
 static inline void gotoxy(unsigned int new_x,unsigned int new_y)
 {
-	if (new_x > video_num_columns || new_y >= video_num_lines)
+	/* SYMPLUS-PORT: 拆分 `||` 为两个独立 if——symcc 对
+	 * `if (a || b) return;` 的跳转目标有误（STUB 落入 then 块导致恒 return） */
+	if (new_x > video_num_columns)
+		return;
+	if (new_y >= video_num_lines)
 		return;
 	x=new_x;
 	y=new_y;
@@ -203,6 +207,13 @@ static void scrdown(void)
 
 static void lf(void)
 {
+	/* SYMPLUS-PORT: M3 字节单元 —— 换行必须回列首。真实 0.11 依赖
+	 * printk 字符串以 "\n\r" 结尾（\r 触发 cr() 回列首）；M3 启动链
+	 * 字符串仅以 \n 结尾，若 lf() 只 pos += size_row，每行会落在
+	 * "上一行末列 + 96" 处。这里先归零列（含 x，避免 x 跨行累积
+	 * 触发假换行）。换行回绕路径调用 lf() 时 x 已为 0，pos -= x 无副作用。 */
+	pos -= x;
+	x = 0;
 	if (y+1<bottom) {
 		y++;
 		pos += video_size_row;

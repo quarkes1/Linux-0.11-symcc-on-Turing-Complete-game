@@ -6,7 +6,7 @@
 
 <p align="center">
   <b>32 位大端 CPU</b> · <b>C89 子集编译器</b> · <b>链接器</b> · <b>指令模拟器</b><br>
-  M0 环境验证 [完成] &nbsp;|&nbsp; M1 编译器骨架 [完成]&nbsp;|&nbsp; M2 内核编译演练 [完成]
+  M0 环境验证 [完成] &nbsp;|&nbsp; M1 编译器骨架 [完成]&nbsp;|&nbsp; M2 内核编译演练 [完成]&nbsp;|&nbsp; M3 内核运行期 [完成]
 </p>
 
 ---
@@ -22,7 +22,8 @@
 3. **把 Linux 0.11 内核源码移植编译**：50 个 `.c` 文件（含 x86 内联汇编的
    `SYMPLUS-PORT` 改写）全部编译、链接通过，输出 `KERNEL BUILD OK`
 
-> 内核运行期验证（启动链、驱动）是下一个里程碑 M3。
+> M3 已完成：内核启动链在模拟器与游戏内跑通——11 行启动日志经 console 重定向
+> 输出到游戏屏幕，fork 前停机。驱动/tick/调度归 M4/M5。
 
 ## 里程碑
 
@@ -31,6 +32,7 @@
 | **M0** 环境验证 | 完成（部分项待游戏内复核） | 加载基址、RAM/DiskA 容量（8MB）、帧缓冲协议、端序（大端） |
 | **M1** 编译器骨架 | 完成（游戏内验收：屏幕显示 Hello） | symcc 单遍编译器、模拟器、屏幕运行时、有符号除/模 |
 | **M2** 编译器特性 | 完成（编译+链接验收） | 结构体/数组/位域、预处理器、`.sym` 可重定位对象、symld 链接器、gcc 式驱动 CLI、**Linux 0.11 内核 50 个 `.c` 编译链接通过** |
+| **M3** 内核运行期 | 完成（模拟器端到端 + 游戏内验收） | console 重定向到游戏屏（96×40 字节单元）、启动链逐阶段日志、fork 前停机、kernel.bin 外部文件模式加载 |
 
 ## 快速开始
 
@@ -41,13 +43,13 @@
 export PATH="/d/Downloads/msys64/mingw64/bin:$PATH"
 
 mingw32-make              # 构建全部工具（编译器/链接器/汇编器/模拟器）
-mingw32-make test         # 运行全部测试（五套：asm/emu/run/preproc/link）
+mingw32-make test         # 运行全部测试（六套：asm/emu/run/preproc/link/kernel_boot）
 ```
 
 内核编译演练：
 
 ```bash
-bash scripts/build_kernel.sh    # 50 个内核 .c → symcc → symld → kernel.asm
+bash scripts/build_kernel.sh    # 50 个内核 .c → symcc → symld → kernel.asm → kernel.bin
                                 # 期望输出：KERNEL BUILD OK
 ```
 
@@ -60,6 +62,23 @@ bash scripts/build_kernel.sh    # 50 个内核 .c → symcc → symld → kernel
      （文件模式**原样装载字节、不做汇编**，必须喂 .bin 机器码而不是 .asm 源码）
 3. 运行（屏幕组件需链接到主内存；RAM 与 DiskA 均为 **Big endian**、8 MB）
 4. 屏幕输出即为程序结果（M1 验收：左上角显示 Hello）
+
+## 运行 Linux 0.11 内核（M3）
+
+构建：
+
+```bash
+bash scripts/build_kernel.sh    # 50 个内核 .c → symld → kernel.asm → kernel.bin（约 570KB）
+```
+
+游戏内验证：
+
+1. RAM 的"外部文件"指向 `build/kernel.bin`（原样装载字节，不做汇编）
+2. 运行：屏幕从左上角逐行显示 11 行启动日志（mem_init OK ... Boot complete. Halting.）
+3. 程序停在 halt 自循环（空转），游戏 UI 不冻结
+
+> 红线：不要向游戏粘贴 kernel.asm 全文——3.4MB 文本会让游戏每次进沙盒
+> 重新汇编而卡死（只能改存档恢复）。内核验证一律走 kernel.bin 文件模式。
 
 ## 使用教程
 
@@ -161,7 +180,7 @@ int main() {
 
 其余选项：`-I <dir>`（可多个）、`-D NAME[=VAL]`（预定义宏，`-DNAME` 连写亦可）、`-save-temps`（保留 .i/.s/.sym 中间文件）、`--d32`（强制数据引用走 32 位装载）、`-v`（打印各阶段文件名）。
 
-说明：symcc 全链路自动带 `runtime/crt0.asm` 启动模板（屏幕 ASCII 模式与帧缓冲基址、栈顶 0x4000、bss 清零、`call main`）；`symld` 单独链接时 `--crt0` 默认也是它，可省略。
+说明：symcc 全链路自动带 `runtime/crt0.asm` 启动模板（屏幕 ASCII 模式与帧缓冲基址、栈顶 1MB（0x100000，避开文字池）、清屏与 bss 清零、`call main`）；`symld` 单独链接时 `--crt0` 默认也是它，可省略。
 
 ## 技术概览
 
@@ -211,8 +230,8 @@ TuringComplete/
 ├── symld/                    # 链接器（.sym 对象 → 绝对 asm）
 ├── runtime/                  # 运行时（crt0.asm 启动模板 + tty.c + divsi3.c）
 ├── emu/                      # 本地汇编器 + 模拟器（调试用，无需进游戏）
-├── tests/                    # 端到端测试（make test，五套）
-├── scripts/                  # build_kernel.sh：内核编译演练验收
+├── tests/                    # 端到端测试（make test，六套）
+├── scripts/                  # build_kernel.sh：内核编译演练验收（产出 kernel.bin）
 ├── Reference/Linux-0.11-main/# 内核源码（SYMPLUS-PORT 适配）
 └── SymphonyPlus.isa          # 游戏指令集定义（与 emu/isa.c 同步）
 ```
@@ -223,6 +242,8 @@ TuringComplete/
   语言能力边界、ABI、.sym 对象格式、链接器行为
 - [Linux 0.11 移植设计](docs/superpowers/specs/2026-08-20-symcc-linux011-port-design.md) —
   SYMPLUS-PORT 策略与内核改写点
+- [M3 内核运行期验证设计](docs/superpowers/specs/2026-08-21-m3-kernel-runtime-design.md) —
+  console 重定向、启动链日志、停机点与验收标准
 
 ## 致谢
 

@@ -345,8 +345,12 @@ static bool resolve_dref(Ctx *c, int obj, const char *name, long *out) {
         *out = (ls->segment == 0 ? c->text_off[obj] : c->data_off[obj]) + ls->off;
         return true;
     }
-    if (find_bss_sym(c, obj, name, out))
+    if (find_bss_sym(c, obj, name, out)) {
+        if (strcmp(name, "cr_flag") == 0 || strcmp(name, "_ctmp") == 0 ||
+            strcmp(name, "_ctype") == 0)
+            fprintf(stderr, "DBG   -> bss 0x%lx\n", *out);
         return true;
+    }
     set_err(c->err, "undefined symbol: %s", name);
     return false;
 }
@@ -596,6 +600,19 @@ bool symld_link(Obj **objs_in, int n_in, const char *crt0_path,
             const char *l = c.objs[oi]->text_lines[i];
             size_t ln = obj_label_name_len(l);
             if (ln) {
+                /* SYMPLUS-PORT 防线：同对象同段重复 label → 报错。此前
+                 * find_local_any 静默取第一个匹配，多函数 switch case 0 同名
+                 * Lg0 时跳转全部错指第一个 switch 的 case 0 块（2026-08-23
+                 * con_write switch(state) case 0 → csi_J case 0 清屏崩溃） */
+                char tmp[256];
+                if (ln < sizeof tmp) {
+                    memcpy(tmp, l, ln);
+                    tmp[ln] = 0;
+                    if (find_local(c.locals, oi, 0, tmp)) {
+                        set_err(c.err, "duplicate local label: %s", tmp);
+                        return false;
+                    }
+                }
                 LocalSym *ls = (LocalSym *)calloc(1, sizeof *ls);
                 ls->name = (char *)malloc(ln + 1);
                 memcpy(ls->name, l, ln);
@@ -614,6 +631,16 @@ bool symld_link(Obj **objs_in, int n_in, const char *crt0_path,
             const char *l = c.objs[oi]->data_lines[i];
             size_t ln = obj_label_name_len(l);
             if (ln) {
+                /* SYMPLUS-PORT 防线：同对象同段重复 label → 报错（同上） */
+                char tmp[256];
+                if (ln < sizeof tmp) {
+                    memcpy(tmp, l, ln);
+                    tmp[ln] = 0;
+                    if (find_local(c.locals, oi, 1, tmp)) {
+                        set_err(c.err, "duplicate local label: %s", tmp);
+                        return false;
+                    }
+                }
                 LocalSym *ls = (LocalSym *)calloc(1, sizeof *ls);
                 ls->name = (char *)malloc(ln + 1);
                 memcpy(ls->name, l, ln);

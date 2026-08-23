@@ -1,0 +1,191 @@
+BSS obj=3 name=free_list size=4 abs=0xbfe4
+BSS obj=3 name=hash_table size=1228 abs=0xbfe8
+BSS obj=8 name=file_table size=1280 abs=0xc4b4
+BSS obj=16 name=super_block size=1024 abs=0xc9b4
+BSS obj=18 name=drive_info size=32 abs=0xcdb4
+BSS obj=18 name=printbuf size=1024 abs=0xcdd4
+BSS obj=19 name=reply_buffer size=7 abs=0xd1d4
+BSS obj=21 name=request size=1152 abs=0xd1db
+BSS obj=22 name=rd_start size=4 abs=0xd65b
+BSS obj=23 name=par size=64 abs=0xd65f
+BSS obj=23 name=npar size=4 abs=0xd69f
+BSS obj=23 name=bottom size=4 abs=0xd6a3
+BSS obj=23 name=top size=4 abs=0xd6a7
+BSS obj=23 name=y size=4 abs=0xd6ab
+BSS obj=23 name=x size=4 abs=0xd6af
+BSS obj=23 name=pos size=4 abs=0xd6b3
+BSS obj=23 name=scr_end size=4 abs=0xd6b7
+BSS obj=23 name=origin size=4 abs=0xd6bb
+BSS obj=23 name=video_erase_char size=2 abs=0xd6bf
+BSS obj=23 name=video_port_val size=2 abs=0xd6c1
+BSS obj=23 name=video_port_reg size=2 abs=0xd6c3
+BSS obj=23 name=video_mem_end size=4 abs=0xd6c5
+BSS obj=23 name=video_mem_start size=4 abs=0xd6c9
+BSS obj=23 name=video_page size=1 abs=0xd6cd
+BSS obj=23 name=video_num_lines size=4 abs=0xd6ce
+BSS obj=23 name=video_size_row size=4 abs=0xd6d2
+BSS obj=23 name=video_num_columns size=4 abs=0xd6d6
+BSS obj=23 name=video_type size=1 abs=0xd6da
+BSS obj=32 name=buf size=1024 abs=0xd6db
+BSS obj=33 name=timer_list size=768 abs=0xdadb
+BSS obj=33 name=user_stack size=4096 abs=0xdddb
+BSS obj=40 name=_ctmp size=1 abs=0xeddb
+BSS obj=42 name=errno size=4 abs=0xeddc
+BSS obj=47 name=___strtok size=4 abs=0xede0
+DBG resolve video_num_columns obj=23 text_off=348764 data_off=553010
+DBG resolve x obj=23 text_off=348764 data_off=553010
+DBG resolve pos obj=23 text_off=348764 data_off=553010
+DBG resolve x obj=23 text_off=348764 data_off=553010
+DBG resolve video_num_columns obj=23 text_off=348764 data_off=553010
+DBG resolve x obj=23 text_off=348764 data_off=553010
+DBG resolve x obj=23 text_off=348764 data_off=553010
+DBG resolve video_num_columns obj=23 text_off=348764 data_off=553010
+DBG resolve x obj=23 text_off=348764 data_off=553010
+DBG resolve pos obj=23 text_off=348764 data_off=553010
+DBG resolve pos obj=23 text_off=348764 data_off=553010
+DBG resolve pos obj=23 text_off=348764 data_off=553010
+DBG resolve pos obj=23 text_off=348764 data_off=553010
+DBG resolve pos obj=23 text_off=348764 data_off=553010
+DBG resolve x obj=23 text_off=348764 data_off=553010
+DBG resolve x obj=23 text_off=348764 data_off=553010
+DBG resolve x obj=23 text_off=348764 data_off=553010
+DBG resolve x obj=23 text_off=348764 data_off=553010
+DBG resolve x obj=23 text_off=348764 data_off=553010
+DBG resolve x obj=23 text_off=348764 data_off=553010
+DBG resolve x obj=23 text_off=348764 data_off=553010
+DBG resolve pos obj=23 text_off=348764 data_off=553010
+DBG resolve pos obj=23 text_off=348764 data_off=553010
+DBG resolve x obj=23 text_off=348764 data_off=553010
+DBG resolve x obj=23 text_off=348764 data_off=553010
+DBG resolve x obj=23 text_off=348764 data_off=553010
+DBG resolve pos obj=23 text_off=348764 data_off=553010
+DBG resolve pos obj=23 text_off=348764 data_off=553010
+DBG resolve video_num_columns obj=23 text_off=348764 data_off=553010
+DBG resolve x obj=23 text_off=348764 data_off=553010
+DBG resolve x obj=23 text_off=348764 data_off=553010
+DBG resolve video_num_columns obj=23 text_off=348764 data_off=553010
+DBG resolve x obj=23 text_off=348764 data_off=553010
+DBG resolve pos obj=23 text_off=348764 data_off=553010
+DBG resolve pos obj=23 text_off=348764 data_off=553010
+DBG resolve x obj=23 text_off=348764 data_off=553010
+DBG resolve x obj=23 text_off=348764 data_off=553010
+DBG resolve x obj=23 text_off=348764 data_off=553010
+DBG resolve x obj=23 text_off=348764 data_off=553010
+DBG resolve x obj=23 text_off=348764 data_off=553010
+DBG resolve x obj=23 text_off=348764 data_off=553010
+DBG resolve x obj=23 text_off=348764 data_off=553010
+DBG resolve x obj=23 text_off=348764 data_off=553010
+DBG resolve video_num_columns obj=23 text_off=348764 data_off=553010
+DBG resolve video_num_columns obj=23 text_off=348764 data_off=553010
+DBG resolve video_num_columns obj=23 text_off=348764 data_off=553010
+DBG resolve video_num_columns obj=23 text_off=348764 data_off=553010
+DBG resolve pos obj=23 text_off=348764 data_off=553010
+DBG resolve video_num_columns obj=23 text_off=348764 data_off=553010
+DBG resolve x obj=23 text_off=348764 data_off=553010
+DBG resolve x obj=23 text_off=348764 data_off=553010
+DBG resolve video_num_columns obj=23 text_off=348764 data_off=553010
+DBG resolve x obj=23 text_off=348764 data_off=553010
+DBG resolve pos obj=23 text_off=348764 data_off=553010
+DBG resolve video_num_columns obj=23 text_off=348764 data_off=553010
+DBG resolve pos obj=23 text_off=348764 data_off=553010
+DBG resolve pos obj=23 text_off=348764 data_off=553010
+DBG resolve video_num_columns obj=23 text_off=348764 data_off=553010
+DBG resolve x obj=23 text_off=348764 data_off=553010
+DBG resolve x obj=23 text_off=348764 data_off=553010
+DBG resolve video_num_columns obj=23 text_off=348764 data_off=553010
+DBG resolve pos obj=23 text_off=348764 data_off=553010
+DBG resolve x obj=23 text_off=348764 data_off=553010
+DBG resolve pos obj=23 text_off=348764 data_off=553010
+DBG resolve video_num_columns obj=23 text_off=348764 data_off=553010
+DBG resolve x obj=23 text_off=348764 data_off=553010
+DBG resolve x obj=23 text_off=348764 data_off=553010
+DBG resolve video_num_columns obj=23 text_off=348764 data_off=553010
+DBG resolve x obj=23 text_off=348764 data_off=553010
+DBG resolve pos obj=23 text_off=348764 data_off=553010
+DBG resolve video_num_columns obj=23 text_off=348764 data_off=553010
+DBG resolve pos obj=23 text_off=348764 data_off=553010
+DBG resolve pos obj=23 text_off=348764 data_off=553010
+DBG resolve pos obj=23 text_off=348764 data_off=553010
+DBG resolve video_num_columns obj=23 text_off=348764 data_off=553010
+DBG resolve x obj=23 text_off=348764 data_off=553010
+DBG resolve pos obj=23 text_off=348764 data_off=553010
+DBG resolve pos obj=23 text_off=348764 data_off=553010
+DBG resolve x obj=23 text_off=348764 data_off=553010
+DBG resolve x obj=23 text_off=348764 data_off=553010
+DBG resolve x obj=23 text_off=348764 data_off=553010
+DBG resolve pos obj=23 text_off=348764 data_off=553010
+DBG resolve pos obj=23 text_off=348764 data_off=553010
+DBG resolve x obj=23 text_off=348764 data_off=553010
+DBG resolve pos obj=23 text_off=348764 data_off=553010
+DBG resolve x obj=23 text_off=348764 data_off=553010
+DBG resolve pos obj=23 text_off=348764 data_off=553010
+DBG resolve pos obj=23 text_off=348764 data_off=553010
+DBG resolve pos obj=23 text_off=348764 data_off=553010
+DBG resolve pos obj=23 text_off=348764 data_off=553010
+DBG resolve video_num_columns obj=23 text_off=348764 data_off=553010
+DBG resolve video_num_columns obj=23 text_off=348764 data_off=553010
+DBG resolve video_num_columns obj=23 text_off=348764 data_off=553010
+DBG resolve video_num_columns obj=23 text_off=348764 data_off=553010
+DBG resolve pos obj=23 text_off=348764 data_off=553010
+DBG resolve pos obj=23 text_off=348764 data_off=553010
+DBG resolve pos obj=23 text_off=348764 data_off=553010
+DBG resolve pos obj=23 text_off=348764 data_off=553010
+DBG resolve video_num_columns obj=23 text_off=348764 data_off=553010
+DBG resolve video_num_columns obj=23 text_off=348764 data_off=553010
+DBG resolve video_num_columns obj=23 text_off=348764 data_off=553010
+DBG resolve video_num_columns obj=23 text_off=348764 data_off=553010
+DBG resolve video_num_columns obj=23 text_off=348764 data_off=553010
+DBG resolve video_num_columns obj=23 text_off=348764 data_off=553010
+DBG resolve video_num_columns obj=23 text_off=348764 data_off=553010
+DBG resolve _ctmp obj=25 text_off=379068 data_off=553039
+DBG   -> global off=60891
+DBG resolve _ctmp obj=25 text_off=379068 data_off=553039
+DBG   -> global off=60891
+DBG resolve _ctmp obj=25 text_off=379068 data_off=553039
+DBG   -> global off=60891
+DBG resolve _ctmp obj=25 text_off=379068 data_off=553039
+DBG   -> global off=60891
+DBG resolve _ctype obj=25 text_off=379068 data_off=553039
+DBG   -> global off=571477
+DBG resolve _ctype obj=25 text_off=379068 data_off=553039
+DBG   -> global off=571477
+DBG resolve _ctmp obj=25 text_off=379068 data_off=553039
+DBG   -> global off=60891
+DBG resolve _ctmp obj=25 text_off=379068 data_off=553039
+DBG   -> global off=60891
+DBG resolve _ctmp obj=25 text_off=379068 data_off=553039
+DBG   -> global off=60891
+DBG resolve _ctmp obj=25 text_off=379068 data_off=553039
+DBG   -> global off=60891
+DBG resolve cr_flag obj=25 text_off=379068 data_off=553039
+DBG   -> local seg=1 off=0 -> 0x8704f
+DBG resolve cr_flag obj=25 text_off=379068 data_off=553039
+DBG   -> local seg=1 off=0 -> 0x8704f
+DBG resolve cr_flag obj=25 text_off=379068 data_off=553039
+DBG   -> local seg=1 off=0 -> 0x8704f
+DBG resolve cr_flag obj=25 text_off=379068 data_off=553039
+DBG   -> local seg=1 off=0 -> 0x8704f
+DBG resolve _ctmp obj=25 text_off=379068 data_off=553039
+DBG   -> global off=60891
+DBG resolve _ctmp obj=25 text_off=379068 data_off=553039
+DBG   -> global off=60891
+DBG resolve _ctmp obj=25 text_off=379068 data_off=553039
+DBG   -> global off=60891
+DBG resolve _ctmp obj=25 text_off=379068 data_off=553039
+DBG   -> global off=60891
+DBG resolve _ctype obj=25 text_off=379068 data_off=553039
+DBG   -> global off=571477
+DBG resolve _ctype obj=25 text_off=379068 data_off=553039
+DBG   -> global off=571477
+DBG resolve _ctmp obj=25 text_off=379068 data_off=553039
+DBG   -> global off=60891
+DBG resolve _ctmp obj=25 text_off=379068 data_off=553039
+DBG   -> global off=60891
+DBG resolve _ctmp obj=25 text_off=379068 data_off=553039
+DBG   -> global off=60891
+DBG resolve _ctmp obj=25 text_off=379068 data_off=553039
+DBG   -> global off=60891
+DBG resolve cr_flag obj=25 text_off=379068 data_off=553039
+DBG   -> local seg=1 off=0 -> 0x8704f
+DBG resolve cr_flag obj=25 text_off=379068 data_off=553039
+DBG   -> local seg=1 off=0 -> 0x8704f

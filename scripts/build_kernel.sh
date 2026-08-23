@@ -42,4 +42,7 @@ fi
 if ! grep -q '^halt:' ../../build/kernel.asm; then
   echo "FAIL: no halt: label in kernel.asm"; exit 1
 fi
+# 汇编为游戏可直接加载的机器码（RAM"外部文件"模式原样装载、不做汇编）
+../../emu/asm.exe ../../build/kernel.asm ../../build/kernel.bin
+echo "== assembled kernel.bin: $(wc -c < ../../build/kernel.bin) bytes"
 echo "KERNEL BUILD OK"

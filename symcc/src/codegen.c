@@ -361,9 +361,15 @@ static void gen_expr(Node *n) {
         }
         return;
     case ND_MEMBER:
+        /* SYMPLUS-PORT: 数组成员（内联数组 q->buf[1024]）表达式求值必须
+         * 衰减为成员地址（q+offset），不能 load 前 4 字节当指针值——否则
+         * 环形队列写入落到低内存 0x0-0x3ff，污染 trampoline slot 表 */
         gen_member_addr(n);
         if (n->bit_width >= 0)
             gen_load_bitfield(n);
+        else if (n->ty->kind == TY_ARRAY || n->ty->kind == TY_STRUCT ||
+                 n->ty->kind == TY_UNION)
+            emit("    mov r1, r9          ; aggregate member addr\n");
         else
             gen_load(n->ty);
         return;

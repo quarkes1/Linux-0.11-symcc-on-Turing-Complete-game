@@ -2321,7 +2321,13 @@ static Func *funcdef(Type *fty, Token *t, bool is_static) {
     vars = NULL;
     locals_bytes = 0;
     lbls = NULL;
-    lbl_num = 0;
+    /* SYMPLUS-PORT: lbl_num 不再按函数重置——switch/goto case 块 label
+     * （Lg%d）必须对象内全局唯一。此前每函数重置导致同对象多个函数的
+     * case 0 都叫 Lg0，symld 按对象内第一个匹配解析，后函数的 case 0
+     * 跳转全部错指到第一个 switch 的 case 0 块（2026-08-23 实测：
+     * con_write 的 switch(state) case 0 被解析到 csi_J case 0，每次
+     * 写字符都变成清屏，con_init 后 count=12032 从地址 0 刷屏破坏
+     * trampoline slot → 崩溃） */
     breakable_depth = loop_depth = 0;
     case_depth = 0;
 

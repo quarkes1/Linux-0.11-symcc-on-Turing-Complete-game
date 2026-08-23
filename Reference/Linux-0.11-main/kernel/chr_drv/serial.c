@@ -23,7 +23,11 @@
 extern void rs1_interrupt(void);
 extern void rs2_interrupt(void);
 
-static void init(int port)
+/* SYMPLUS-PORT: 改名 rs_port_init——原 init 与 init/main.c 的 init() 符号
+ * 冲突，symld 对重复符号静默保留第一个，rs_init 的调用被错误解析到
+ * main.c 的 init()（实测 tty_init→rs_init→main.c init()→fork 死循环超限，
+ * 2026-08-23） */
+static void rs_port_init(int port)
 {
 	outb_p(0x80,port+3);	/* set DLAB of line control reg */
 	outb_p(0x30,port);	/* LS of divisor (48 -> 2400 bps */
@@ -38,8 +42,8 @@ void rs_init(void)
 {
 	set_intr_gate(0x24,rs1_interrupt);
 	set_intr_gate(0x23,rs2_interrupt);
-	init(tty_table[1].read_q.data);
-	init(tty_table[2].read_q.data);
+	rs_port_init(tty_table[1].read_q.data);
+	rs_port_init(tty_table[2].read_q.data);
 	outb(inb_p(0x21)&0xE7,0x21);
 }
 
