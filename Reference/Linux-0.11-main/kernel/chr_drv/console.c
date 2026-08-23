@@ -91,7 +91,8 @@ static inline void gotoxy(unsigned int new_x,unsigned int new_y)
 		return;
 	x=new_x;
 	y=new_y;
-	pos=origin + y*video_size_row + (x<<1);
+	/* SYMPLUS-PORT: M3 字节单元（游戏屏每字符 1 字节），不再 x<<1 */
+	pos=origin + y*video_size_row + x;
 }
 
 static inline void set_origin(void)
@@ -153,11 +154,12 @@ static void scrup(void)
 	}
 	else		/* Not EGA/VGA */
 	{
-/* SYMPLUS-PORT: rep movsl+stosw scroll -> C loop */
+/* SYMPLUS-PORT: rep movsl+stosw scroll -> C loop（M3 字节单元，游戏屏）
+ * video_type 硬编码 CGA，EGA 快速滚动分支为死代码，未改写 */
 		{
-			unsigned short *_d = (unsigned short *)(origin + video_size_row*top);
-			unsigned short *_s = (unsigned short *)(origin + video_size_row*(top+1));
-			unsigned short *_e = (unsigned short *)(origin + video_size_row*(bottom-1));
+			unsigned char *_d = (unsigned char *)(origin + video_size_row*top);
+			unsigned char *_s = (unsigned char *)(origin + video_size_row*(top+1));
+			unsigned char *_e = (unsigned char *)(origin + video_size_row*(bottom-1));
 			int _i;
 			for (_i = 0; _i < (bottom-top-1)*video_num_columns; _i++)
 				_d[_i] = _s[_i];
@@ -185,11 +187,11 @@ static void scrdown(void)
 	}
 	else		/* Not EGA/VGA */
 	{
-/* SYMPLUS-PORT: std rep movsl+stosw scroll-down -> C reverse loop */
+/* SYMPLUS-PORT: std rep movsl+stosw scroll-down -> C reverse loop（M3 字节单元） */
 		{
-			unsigned short *_d = (unsigned short *)(origin + video_size_row*(top+1));
-			unsigned short *_s = (unsigned short *)(origin + video_size_row*top);
-			unsigned short *_e = (unsigned short *)origin;
+			unsigned char *_d = (unsigned char *)(origin + video_size_row*(top+1));
+			unsigned char *_s = (unsigned char *)(origin + video_size_row*top);
+			unsigned char *_e = (unsigned char *)origin;
 			int _i;
 			for (_i = (bottom-top-1)*video_num_columns - 1; _i >= 0; _i--)
 				_d[_i] = _s[_i];
@@ -221,16 +223,17 @@ static void ri(void)
 
 static void cr(void)
 {
-	pos -= x<<1;
+	/* SYMPLUS-PORT: M3 字节单元 */
+	pos -= x;
 	x=0;
 }
 
 static void del(void)
 {
 	if (x) {
-		pos -= 2;
+		pos -= 1;	/* SYMPLUS-PORT: M3 字节单元 */
 		x--;
-		*(unsigned short *)pos = video_erase_char;
+		*(unsigned char *)pos = video_erase_char;
 	}
 }
 
@@ -241,11 +244,11 @@ static void csi_J(int par)
 
 	switch (par) {
 		case 0:	/* erase from cursor to end of display */
-			count = (scr_end-pos)>>1;
+			count = scr_end-pos;	/* SYMPLUS-PORT: M3 字节单元（原 >>1） */
 			start = pos;
 			break;
 		case 1:	/* erase from start to cursor */
-			count = (pos-origin)>>1;
+			count = pos-origin;	/* SYMPLUS-PORT: M3 字节单元 */
 			start = origin;
 			break;
 		case 2: /* erase whole display */
@@ -255,9 +258,9 @@ static void csi_J(int par)
 		default:
 			return;
 	}
-/* SYMPLUS-PORT: rep stosw erase -> C loop */
+/* SYMPLUS-PORT: rep stosw erase -> C loop（M3 字节单元） */
 	{
-		unsigned short *_p = (unsigned short *)start;
+		unsigned char *_p = (unsigned char *)start;
 		long _i;
 		for (_i = 0; _i < count; _i++)
 			_p[_i] = video_erase_char;
@@ -277,19 +280,19 @@ static void csi_K(int par)
 			start = pos;
 			break;
 		case 1:	/* erase from start of line to cursor */
-			start = pos - (x<<1);
+			start = pos - x;	/* SYMPLUS-PORT: M3 字节单元 */
 			count = (x<video_num_columns)?x:video_num_columns;
 			break;
 		case 2: /* erase whole line */
-			start = pos - (x<<1);
+			start = pos - x;	/* SYMPLUS-PORT: M3 字节单元 */
 			count = video_num_columns;
 			break;
 		default:
 			return;
 	}
-/* SYMPLUS-PORT: rep stosw erase -> C loop */
+/* SYMPLUS-PORT: rep stosw erase -> C loop（M3 字节单元） */
 	{
-		unsigned short *_p = (unsigned short *)start;
+		unsigned char *_p = (unsigned char *)start;
 		long _i;
 		for (_i = 0; _i < count; _i++)
 			_p[_i] = video_erase_char;
@@ -336,8 +339,8 @@ static void respond(struct tty_struct * tty)
 static void insert_char(void)
 {
 	int i=x;
-	unsigned short tmp, old = video_erase_char;
-	unsigned short * p = (unsigned short *) pos;
+	unsigned char tmp, old = video_erase_char;
+	unsigned char * p = (unsigned char *) pos;
 
 	while (i++<video_num_columns) {
 		tmp=*p;
@@ -363,7 +366,7 @@ static void insert_line(void)
 static void delete_char(void)
 {
 	int i;
-	unsigned short * p = (unsigned short *) pos;
+	unsigned char * p = (unsigned char *) pos;
 
 	if (x>=video_num_columns)
 		return;
@@ -458,9 +461,10 @@ void con_write(struct tty_struct * tty)
 						pos -= video_size_row;
 						lf();
 					}
-/* SYMPLUS-PORT: attr+char store -> direct write */
-					*(unsigned short *)pos = (unsigned short)(((unsigned short)attr << 8) | (c & 0xff));
-					pos += 2;
+				/* SYMPLUS-PORT: M3 attr+char 双字节写 -> 单字符字节写
+				 * （游戏屏纯 ASCII，颜色由 crt0 白字黑底设置提供） */
+					*(unsigned char *)pos = (unsigned char)c;
+					pos += 1;
 					x++;
 				} else if (c==27)
 					state=1;
@@ -473,12 +477,12 @@ void con_write(struct tty_struct * tty)
 				else if (c==8) {
 					if (x) {
 						x--;
-						pos -= 2;
+						pos -= 1;	/* SYMPLUS-PORT: M3 字节单元 */
 					}
 				} else if (c==9) {
 					c=8-(x&7);
 					x += c;
-					pos += c<<1;
+					pos += c;	/* SYMPLUS-PORT: M3 字节单元 */
 					if (x>video_num_columns) {
 						x -= video_num_columns;
 						pos -= video_size_row;
@@ -615,61 +619,24 @@ void con_write(struct tty_struct * tty)
 void con_init(void)
 {
 	register unsigned char a;
-	char *display_desc = "????";
-	char *display_ptr;
 
-	video_num_columns = ORIG_VIDEO_COLS;
-	video_size_row = video_num_columns * 2;
-	video_num_lines = ORIG_VIDEO_LINES;
-	video_page = ORIG_VIDEO_PAGE;
-	video_erase_char = 0x0720;
+	/* SYMPLUS-PORT: M3 不读 0x90000 BIOS 参数区（游戏 RAM 无此数据），
+	 * 硬编码游戏屏几何：ASCII 8 文本 96×40、帧缓冲 0x2000
+	 * （与 symcc/include/config.h 的 FRAMEBUF_BASE/COLS/ROWS 一致） */
+	video_num_columns = 96;
+	video_size_row = video_num_columns;	/* 字节单元：每字符 1 字节（游戏屏纯 ASCII） */
+	video_num_lines = 40;
+	video_page = 0;
+	video_erase_char = 0x20;	/* ' ' */
+	video_mem_start = 0x2000;
+	video_mem_end = video_mem_start + video_num_lines * video_size_row;
+	video_port_reg = 0;		/* 无端口（outb_p/inb_p 为桩） */
+	video_port_val = 0;
+	video_type = VIDEO_TYPE_CGA;	/* 走非 EGA 简单滚屏路径（无 EGA 快速滚动） */
 	
-	if (ORIG_VIDEO_MODE == 7)			/* Is this a monochrome display? */
-	{
-		video_mem_start = 0xb0000;
-		video_port_reg = 0x3b4;
-		video_port_val = 0x3b5;
-		if ((ORIG_VIDEO_EGA_BX & 0xff) != 0x10)
-		{
-			video_type = VIDEO_TYPE_EGAM;
-			video_mem_end = 0xb8000;
-			display_desc = "EGAm";
-		}
-		else
-		{
-			video_type = VIDEO_TYPE_MDA;
-			video_mem_end	= 0xb2000;
-			display_desc = "*MDA";
-		}
-	}
-	else								/* If not, it is color. */
-	{
-		video_mem_start = 0xb8000;
-		video_port_reg	= 0x3d4;
-		video_port_val	= 0x3d5;
-		if ((ORIG_VIDEO_EGA_BX & 0xff) != 0x10)
-		{
-			video_type = VIDEO_TYPE_EGAC;
-			video_mem_end = 0xbc000;
-			display_desc = "EGAc";
-		}
-		else
-		{
-			video_type = VIDEO_TYPE_CGA;
-			video_mem_end = 0xba000;
-			display_desc = "*CGA";
-		}
-	}
+	/* SYMPLUS-PORT: M3 删除 BIOS 显示类型探测（游戏屏几何已硬编码） */
 
-	/* Let the user known what kind of display driver we are using */
-	
-	display_ptr = ((char *)video_mem_start) + video_size_row - 8;
-	while (*display_desc)
-	{
-		*display_ptr++ = *display_desc++;
-		display_ptr++;
-	}
-	
+	/* SYMPLUS-PORT: M3 删除 display_desc 写屏（字节单元下会散写第 0 行） */
 	/* Initialize the variables used for scrolling (mostly EGA/VGA)	*/
 	
 	origin	= video_mem_start;
@@ -677,7 +644,8 @@ void con_init(void)
 	top	= 0;
 	bottom	= video_num_lines;
 
-	gotoxy(ORIG_X,ORIG_Y);
+	/* SYMPLUS-PORT: M3 起始光标 (0,0)（不读 ORIG_X/ORIG_Y） */
+	gotoxy(0,0);
 	set_trap_gate(0x21,&keyboard_interrupt);
 	outb_p(inb_p(0x21)&0xfd,0x21);
 	a=inb_p(0x61);
