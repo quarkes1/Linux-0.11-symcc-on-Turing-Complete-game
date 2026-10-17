@@ -32,6 +32,7 @@ class DiskCapacityTest(unittest.TestCase):
             with self.subTest(mib=mib):
                 disk=self.fixture(mib);tag='ZONE-'+str(mib)
                 written,_=self.execute(disk,'echo '+tag+'>/tmp/high\nsync\ncat /etc/finish\n')
+                self.assertEqual(written[1024:2048],disk[1024:2048])
                 zone=self.high_zone(written)
                 self.assertGreaterEqual(zone,mib*1024)
                 self.assertFalse(self.allocated(disk,zone));self.assertTrue(self.allocated(written,zone))
@@ -42,6 +43,9 @@ class DiskCapacityTest(unittest.TestCase):
                 self.assertFalse(self.allocated(deleted,zone))
                 with self.assertRaises(FileNotFoundError):fs.read_file(deleted,'/tmp/high')
                 self.assertEqual(fs.read_file(deleted,'/etc/filler'),b'\0'*(mib<<20))
+                self.assertEqual(deleted[1024:2048],disk[1024:2048])
+                for name in ('init','sh','echo','cat','rm','sync'):
+                    self.assertEqual(fs.read_file(deleted,'/bin/'+name),fs.read_file(disk,'/bin/'+name))
     def test_alias_profile_is_detected_by_saved_high_zone_contents(self):
         disk=self.fixture(8)
         saved,_=self.execute(disk,'echo HIGHZONE>/tmp/high\nsync\ncat /etc/finish\n',mask=0x7fffff,expect_success=False)

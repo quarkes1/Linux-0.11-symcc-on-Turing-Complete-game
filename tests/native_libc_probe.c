@@ -20,5 +20,6 @@ int main(void) {
     if(fopen("/missing/file","r")!=NULL)return 11;
     f=fopen("/tmp/sdk","r");if(!f)return 12;
     if(fwrite("bad",1,3,f)!=0 || !ferror(f))return 13;
-    fclose(f);puts("SDK PASS");return 0;
+    if(fclose(f)!=EOF)return 14;
+    puts("SDK PASS");return 0;
 }

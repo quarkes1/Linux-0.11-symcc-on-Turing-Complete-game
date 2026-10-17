@@ -21,7 +21,7 @@ FILE *fopen(const char *path,const char *mode) {
     if(f->fd<0){free(f);return 0;}f->flags=access;return f;
 }
 int fflush(FILE *f){if(f && f->error)return EOF;return 0;}
-int fclose(FILE *f){int r;if(!f)return EOF;if(f->flags&4)return fflush(f);r=close(f->fd);free(f);return r;}
+int fclose(FILE *f){int r,failed;if(!f)return EOF;if(f->flags&4)return fflush(f);failed=f->error;r=close(f->fd);free(f);return failed || r<0?EOF:0;}
 int ferror(FILE *f){return f->error;}
 int feof(FILE *f){return f->eof;}
 void clearerr(FILE *f){f->error=f->eof=0;}

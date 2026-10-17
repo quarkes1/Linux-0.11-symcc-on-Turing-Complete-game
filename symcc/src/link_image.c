@@ -226,6 +226,7 @@ bool symld_link_ex(Obj **objs,int n,const char *crt0,const LinkOptions *opt,FILE
         }
         fwrite(bytes,1,(size_t)len,bin);free(bytes);
     }
+    if((out && ferror(out)) || (bin && ferror(bin)))fail(&im,"image write failed");
     ok=!im.failed;
 done:
     for(int i=0;i<im.ns;i++)free(im.syms[i].name);

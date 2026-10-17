@@ -153,7 +153,7 @@ bool obj_write(const Obj *o, FILE *out) {
                 s->is_data ? 'D' : 'T',
                 s->segment ? "data" : "text",
                 s->offset, s->size);
-    return true;
+    return !ferror(out);
 }
 
 /* 反序列化：逐行读取（动态缓冲），识别 .text/.data/.bss/.sym 头行，
@@ -213,5 +213,5 @@ bool obj_read(Obj *o, FILE *in) {
             obj_add_data(o, line);
     }
     free(line);
-    return true;
+    return !ferror(in);
 }

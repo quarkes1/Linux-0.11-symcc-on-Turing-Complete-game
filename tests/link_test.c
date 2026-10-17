@@ -201,6 +201,12 @@ int main(void) {
         fclose(fp);obj_free(o);
     }
     test_line_sizes();
+    {
+        Obj *o=obj_new();FILE *readonly=fopen("tests/for_decl_probe.c","rb");
+        CHECK(readonly!=NULL);
+        CHECK(!obj_write(o,readonly));
+        fclose(readonly);obj_free(o);
+    }
     test_obj_roundtrip();
     test_codegen_obj_form();
     test_link_two_objects();
