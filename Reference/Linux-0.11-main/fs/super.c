@@ -133,9 +133,18 @@ static struct super_block * read_super(int dev)
 		*((struct d_super_block *) bh->b_data);
 #endif
 	brelse(bh);
-	if (s->s_magic != SUPER_MAGIC || s->s_nzones>8192 ||
-        s->s_imap_blocks!=1 || s->s_zmap_blocks!=1 || !s->s_ninodes || s->s_ninodes>128 ||
-        s->s_log_zone_size!=0 || s->s_firstdatazone<8 || s->s_firstdatazone>=s->s_nzones) {
+	/* SYMPLUS-PORT: validate bitmap coverage and metadata/data separation. */
+    if (s->s_magic != SUPER_MAGIC ||
+#ifdef SP_INTERACTIVE
+        s->s_nzones>SP_DISK_BYTES/1024 ||
+#else
+        s->s_nzones>8192 ||
+#endif
+        s->s_imap_blocks!=1 || !s->s_zmap_blocks || s->s_zmap_blocks>Z_MAP_SLOTS ||
+        !s->s_ninodes || s->s_ninodes>128 || s->s_log_zone_size!=0 ||
+        s->s_firstdatazone < 2+s->s_imap_blocks+s->s_zmap_blocks+(s->s_ninodes+31)/32 ||
+        s->s_firstdatazone>=s->s_nzones ||
+        s->s_zmap_blocks*8192 < s->s_nzones-s->s_firstdatazone+1) {
 		s->s_dev = 0;
 		free_super(s);
 		return NULL;
@@ -273,11 +282,11 @@ void mount_root(void)
 	current->pwd = mi;
 	current->root = mi;
 	free=0;
-	i=p->s_nzones;
-	while (-- i >= 0)
+	i=p->s_nzones-p->s_firstdatazone+1;
+	while (-- i > 0)
 		if (!set_bit(i&8191,p->s_zmap[i>>13]->b_data))
 			free++;
-	printk("%d/%d free blocks\n\r",free,p->s_nzones);
+	printk("%d/%d free blocks\n\r",free,p->s_nzones-p->s_firstdatazone);
 	free=0;
 	i=p->s_ninodes+1;
 	while (-- i >= 0)

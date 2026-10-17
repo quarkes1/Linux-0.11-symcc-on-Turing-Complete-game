@@ -1,6 +1,9 @@
 import pathlib,subprocess,tempfile,unittest,struct
 import importlib.util
 ROOT=pathlib.Path(__file__).resolve().parents[1]
+def fs_geometry(data):
+    ninodes,nzones,imap,zmap,first,shift=struct.unpack_from('>6H',data,1024)
+    return {'inode_base':(2+imap+zmap)*1024,'first':first,'nzones':nzones,'zmap_base':(2+imap)*1024}
 class CliTest(unittest.TestCase):
     def test_shell_conditions_status_and_complete_parse(self):
         mod,disk,screen=self.file_session(
@@ -103,9 +106,9 @@ class CliTest(unittest.TestCase):
         original=mod.make_image(files)
         directory=mod.read_file(original,'/etc')
         ino=next(struct.unpack_from('>H',directory,i)[0] for i in range(0,len(directory),16) if directory[i+2:i+16].rstrip(b'\0')==b'victim')
-        inode=4096+(ino-1)*32
-        rootzone=struct.unpack_from('>H',original,4096+14)[0]
-        bitmap_byte=3072+(rootzone-8+1)//8;mask=1<<((rootzone-8+1)%8)
+        g=fs_geometry(original);inode=g['inode_base']+(ino-1)*32
+        rootzone=struct.unpack_from('>H',original,g['inode_base']+14)[0]
+        bitmap_byte=g['zmap_base']+(rootzone-g['first']+1)//8;mask=1<<((rootzone-g['first']+1)%8)
         self.assertTrue(original[bitmap_byte]&mask)
         for corruption in ['single','double','nested']:
             for command in ['rm /etc/victim','echo cut>/etc/victim']:
@@ -150,11 +153,20 @@ class CliTest(unittest.TestCase):
             result=subprocess.run([str(ROOT/'emu/emu.exe'),'build/kernel.bin','--disk','build/rootfs.bin','--until','symplus:/$ ','--write-disk',str(out)],cwd=ROOT,capture_output=True,timeout=30)
             self.assertEqual(result.returncode,0,result.stderr.decode(errors='replace'))
             self.assertIn(b'symplus:/$',result.stdout)
-            self.assertEqual(len(out.read_bytes()),8388608)
+            self.assertEqual(len(out.read_bytes()),len(before))
         self.assertEqual(source.read_bytes(),before)
     def test_reject_bad_option(self):
         r=subprocess.run([str(ROOT/'emu/emu.exe'),'build/kernel.bin','--typo'],cwd=ROOT,capture_output=True)
         self.assertEqual(r.returncode,2)
+    def test_reject_superblock_with_short_bitmap_or_overlapping_metadata(self):
+        source=bytearray((ROOT/'build/rootfs.bin').read_bytes())
+        for offset,value in [(1030,0),(1030,1),(1032,7)]:
+            with self.subTest(offset=offset,value=value),tempfile.TemporaryDirectory() as temp:
+                data=bytearray(source);struct.pack_into('>H',data,offset,value)
+                disk=pathlib.Path(temp)/'bad-super.bin';disk.write_bytes(data)
+                r=subprocess.run([str(ROOT/'emu/emu.exe'),'build/kernel.bin','--disk',str(disk),'--until','Unable to mount root'],cwd=ROOT,capture_output=True,timeout=10)
+                self.assertEqual(r.returncode,0,r.stderr.decode(errors='replace'))
+                self.assertIn(b'Unable to mount root',r.stdout)
     def test_wrapped_framebuffer_is_not_a_host_pointer(self):
         words=[0x31100001,0x3120ffff,0x37220010,0x3122ff00,0x04010200]+[0]*1024
         words.append(0x580f0000|len(words)*4)
@@ -164,9 +176,10 @@ class CliTest(unittest.TestCase):
             self.assertEqual(r.returncode,0,r.stderr.decode(errors='replace'))
     def test_metadata_zone_is_rejected_by_file_read(self):
         data=bytearray((ROOT/'build/rootfs.bin').read_bytes())
-        zone=struct.unpack_from('>H',data,4096+3*32+14)[0]
+        base=fs_geometry(data)['inode_base']
+        zone=struct.unpack_from('>H',data,base+3*32+14)[0]
         ino=next(struct.unpack_from('>H',data,o)[0] for o in range(zone*1024,(zone+1)*1024,16) if data[o+2:o+16].rstrip(b'\0')==b'motd')
-        struct.pack_into('>H',data,4096+(ino-1)*32+14,1)
+        struct.pack_into('>H',data,base+(ino-1)*32+14,1)
         with tempfile.TemporaryDirectory() as temp:
             disk=pathlib.Path(temp)/'bad.bin';disk.write_bytes(data)
             keys=pathlib.Path(temp)/'keys.txt';keys.write_bytes(b'cat /etc/motd\n')
@@ -185,7 +198,7 @@ class CliTest(unittest.TestCase):
             self.assertIn(b'ABsymplus:/$',second.stdout)
     def test_corrupt_directory_cannot_modify_superblock(self):
         data=bytearray((ROOT/'build/rootfs.bin').read_bytes())
-        struct.pack_into('>H',data,4096+4*32+14,1)
+        struct.pack_into('>H',data,fs_geometry(data)['inode_base']+4*32+14,1)
         with tempfile.TemporaryDirectory() as temp:
             disk=pathlib.Path(temp)/'bad-dir.bin';disk.write_bytes(data)
             saved=pathlib.Path(temp)/'saved.bin';keys=pathlib.Path(temp)/'keys.txt';keys.write_bytes(b'forktest\n')

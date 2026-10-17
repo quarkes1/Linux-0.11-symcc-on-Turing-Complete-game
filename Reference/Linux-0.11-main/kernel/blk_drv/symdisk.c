@@ -5,7 +5,7 @@
 static void disk_request(void) {
     struct request *r;unsigned address,bytes,i,value;int ok;
     while((r=blk_dev[3].current_request)!=NULL) {
-        ok=MINOR(r->dev)==0 && r->sector<16384 && r->nr_sectors<=16384-r->sector &&
+        ok=MINOR(r->dev)==0 && r->sector<SP_DISK_BYTES/512 && r->nr_sectors<=SP_DISK_BYTES/512-r->sector &&
             (r->cmd==READ || r->cmd==WRITE);
         if(ok) {
             address=r->sector*512;bytes=r->nr_sectors*512;

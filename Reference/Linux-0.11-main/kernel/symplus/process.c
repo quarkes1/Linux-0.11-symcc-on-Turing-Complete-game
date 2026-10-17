@@ -236,7 +236,7 @@ void sp_boot(void) {
     printk("[ OK ] Process scheduler: cooperative, 8 user slots\n");
     printk("[ OK ] Clock: nanosecond polling enabled\n");
     blk_dev_init();printk("[ OK ] blk_dev_init: block request queues ready\n");
-    symdisk_init();printk("[ OK ] DiskA driver ready (8 MiB, big endian)\n");
+    symdisk_init();printk("[ OK ] DiskA driver ready (%u MiB, big endian)\n",SP_DISK_BYTES/1048576);
     buffer_init(0x180000);printk("[ OK ] buffer_init: block cache ready\n");
     printk("[    ] Mounting MINIX root filesystem...\n");mount_root();
     printk("[ OK ] MINIX root mounted on DiskA\n");
