@@ -69,6 +69,7 @@ test: all m3-image system-image
 	tests/tick_test.exe
 	python -m unittest discover -s tests -p test_mkrootfs.py
 	python -m unittest discover -s tests -p test_platform_config.py
+	python -m unittest discover -s tests -p test_disk_capacity.py
 	python -m unittest discover -s tests -p test_emu_cli.py
 
 m3-image: all
@@ -90,6 +91,10 @@ all: tests/tick_test.exe
 all: tests/shell_parse_test.exe
 all: tests/bridge_copy_test.exe
 all: tests/capacity_probe_test.exe
+all: tests/disk_capacity_test.exe
+
+tests/disk_capacity_test.exe: tests/disk_capacity_test.c emu/emu.c $(EMU_HDR) runtime/platform.h
+	$(CC) $(CFLAGS) -O2 -o $@ tests/disk_capacity_test.c emu/emu.c
 
 tests/capacity_probe_test.exe: tests/capacity_probe_test.c $(EMU_SRC) $(EMU_HDR) runtime/platform.h
 	$(CC) $(CFLAGS) -o $@ tests/capacity_probe_test.c $(EMU_SRC)
