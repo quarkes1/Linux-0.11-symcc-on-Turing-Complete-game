@@ -2,6 +2,33 @@ import pathlib,subprocess,tempfile,unittest,struct
 import importlib.util
 ROOT=pathlib.Path(__file__).resolve().parents[1]
 class CliTest(unittest.TestCase):
+    def test_shell_conditions_status_and_complete_parse(self):
+        mod,disk,screen=self.file_session(
+            'mkdir /tmp/list; cd /tmp/list && echo yes>right\n'
+            'cd /missing && echo bad>skip || echo no>fallback\n'
+            'nosuch && echo bad>skip || echo good>or; echo always>always\n'
+            'echo first>first || echo bad>skip && echo chain>chain\n'
+            'echo original>/tmp/keep\necho changed>/tmp/keep &&\n'
+            'echo "literal&&pipe||semi;">quoted\n')
+        try:right=mod.read_file(disk,'/tmp/list/right')
+        except FileNotFoundError:self.fail('cd temp && command is still rejected')
+        self.assertEqual(right,b'yes\n')
+        self.assertEqual(mod.read_file(disk,'/tmp/list/fallback'),b'no\n')
+        self.assertEqual(mod.read_file(disk,'/tmp/list/or'),b'good\n')
+        self.assertEqual(mod.read_file(disk,'/tmp/list/always'),b'always\n')
+        self.assertEqual(mod.read_file(disk,'/tmp/list/quoted'),b'literal&&pipe||semi;\n')
+        self.assertEqual(mod.read_file(disk,'/tmp/list/chain'),b'chain\n')
+        self.assertEqual(mod.read_file(disk,'/tmp/keep'),b'original\n')
+        with self.assertRaises(FileNotFoundError):mod.read_file(disk,'/tmp/list/skip')
+    def test_short_circuit_consumes_heredoc_without_executing_body(self):
+        mod,disk,screen=self.file_session('echo keep>/etc/keep\nnosuch && cat >/tmp/skipped <<E\nrm /etc/keep\nE\necho after>/tmp/after\n')
+        self.assertEqual(mod.read_file(disk,'/etc/keep'),b'keep\n')
+        self.assertEqual(mod.read_file(disk,'/tmp/after'),b'after\n')
+        with self.assertRaises(FileNotFoundError):mod.read_file(disk,'/tmp/skipped')
+    def test_child_shell_exit_status_controls_parent_list(self):
+        mod,disk,screen=self.file_session('sh && echo bad>/tmp/skip || echo seven>/tmp/seven\nexit 7\n')
+        self.assertEqual(mod.read_file(disk,'/tmp/seven'),b'seven\n')
+        with self.assertRaises(FileNotFoundError):mod.read_file(disk,'/tmp/skip')
     def file_session(self,script):
         spec=importlib.util.spec_from_file_location('mkrootfs',ROOT/'scripts/mkrootfs.py')
         mod=importlib.util.module_from_spec(spec);spec.loader.exec_module(mod)

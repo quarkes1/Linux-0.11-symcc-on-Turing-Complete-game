@@ -9,6 +9,7 @@ static int fork_seen,error_seen,upper_seen,proc_seen,orphan_seen,exec_seen,reg_s
 static int boot_seen,welcome_seen,clean_seen,cwd_seen,pwd_seen,long_seen,dots_seen,badflag_seen;
 static int nested_seen;
 static int file_seen;
+static int erase_seen;
 static int row_is(const char *screen,const char *want);
 static int last_row_is(const char *screen,const char *want) {
     for(int row=39;row>=0;row--) {
@@ -73,6 +74,7 @@ static int seen(const EmuResult *r,uint64_t n,void *p) {
     }
     if(mode==7 && stable && last_row_is(screen,">"))can_type=1;
     file_seen|=row_is(screen,"int main(void) { return 2 < 3; }");
+    erase_seen|=row_is(screen,"ERASEME");
     cwd_seen|=row_is(screen,"symplus:/etc$");pwd_seen|=row_is(screen,"/etc");
     long_seen|=row_is(screen,"-rw-r--r-- 1 0 0 31 motd");
     dots_seen|=row_is(screen,"drwxr-xr-x 2 0 0 48 .");
@@ -91,6 +93,8 @@ static int seen(const EmuResult *r,uint64_t n,void *p) {
     if(mode==5)return stable && row_is(screen,"keydone") && prompt(screen);
     if(mode==6)return stable && row_is(screen,"symdone") && prompt(screen);
     if(mode==7)return stable && row_is(screen,"filedone") && prompt(screen);
+    if(mode==8)return stable && row_is(screen,"listdone") && prompt(screen);
+    if(mode==9)return stable && row_is(screen,"resetdone") && prompt(screen);
     return fork_seen && error_seen && upper_seen && stable && row_is(screen,"finished") && prompt(screen);
 }
 static unsigned char *readfile(const char *s,size_t *len) {
@@ -117,6 +121,10 @@ int main(int argc,char **argv) {
         mode=6;script="echo '~!@#$%^&*()_+{}|:\"<>?'\necho symdone\n";
     } else if(argc>1 && !strcmp(argv[1],"--files")) {
         mode=7;script="mkdir /tmp/demo\ncat >/tmp/demo/note <<EOF\nint main(void) { return 2 < 3; }\nEOF\ncat /tmp/demo/note\ncat /tmp/copy <<END\nsecond\nEND\nrm /tmp/copy\nrm -r /tmp/demo\necho filedone\n";
+    } else if(argc>1 && !strcmp(argv[1],"--lists")) {
+        mode=8;script="cd /etc && pwd\ncd /missing && echo BAD || echo recovered\nnosuch || echo fallback; echo always\ncd /\necho listdone\n";
+    } else if(argc>1 && !strcmp(argv[1],"--reset")) {
+        mode=9;script="cd /etc\necho ERASEME\nreset\npwd\necho resetdone\n";
     }
     size_t bn,dn;unsigned char *bin=readfile("build/kernel.bin",&bn),*disk=readfile("build/rootfs.bin",&dn);
     EmuOptions opt={0};EmuResult r;
@@ -137,5 +145,7 @@ int main(int argc,char **argv) {
     }
     if(mode==6)ok=ok && row_is((char *)r.mem+0x2000,"~!@#$%^&*()_+{}|:\"<>?");
     if(mode==7)ok=ok && file_seen;
+    if(mode==8)ok=ok && row_is((char *)r.mem+0x2000,"recovered") && row_is((char *)r.mem+0x2000,"fallback") && !row_is((char *)r.mem+0x2000,"BAD");
+    if(mode==9)ok=ok && erase_seen && !row_is((char *)r.mem+0x2000,"ERASEME") && last_row_is((char *)r.mem+0x2000,"symplus:/etc$");
     free(bin);free(disk);free(r.mem);free(r.disk);return ok?0:1;
 }
