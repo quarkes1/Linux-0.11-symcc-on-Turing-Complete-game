@@ -43,6 +43,8 @@ typedef struct {
     void *opaque;
     /* Optional live FIFO source. Called only when scripted events are absent. */
     uint32_t (*keyboard)(void *);
+    /* Optional device address-line masks; zero keeps full addressing. */
+    uint32_t ram_address_mask,disk_address_mask;
 } EmuOptions;
 EmuResult emu_run_ex(const uint8_t *, size_t, size_t, uint64_t, const EmuOptions *);
 

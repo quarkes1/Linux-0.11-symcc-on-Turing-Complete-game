@@ -17,6 +17,8 @@ tests/*.bin
 __pycache__/
 *.o
 !runtime/crt0_interactive.asm
+!runtime/capacity_crt0.sym
+!runtime/empty_crt0.asm
 *.spx
 
 .superpowers/

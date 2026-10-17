@@ -52,6 +52,7 @@ test: all m3-image system-image
 	tests/kernel_boot_test.exe
 	tests/platform_test.exe
 	tests/bridge_copy_test.exe
+	tests/capacity_probe_test.exe
 	tests/emu_io_test.exe
 	tests/user_link_test.exe
 	tests/shell_test.exe
@@ -75,6 +76,7 @@ m3-image: all
 
 system-image: all
 	bash scripts/build_system.sh
+	bash scripts/build_capacity_probe.sh
 
 clean:
 	rm -f emu/*.exe tests/*.exe symcc/symcc.exe symld/symld.exe
@@ -87,6 +89,10 @@ all: tests/platform_test.exe tests/emu_io_test.exe tests/user_link_test.exe test
 all: tests/tick_test.exe
 all: tests/shell_parse_test.exe
 all: tests/bridge_copy_test.exe
+all: tests/capacity_probe_test.exe
+
+tests/capacity_probe_test.exe: tests/capacity_probe_test.c $(EMU_SRC) $(EMU_HDR) runtime/platform.h
+	$(CC) $(CFLAGS) -o $@ tests/capacity_probe_test.c $(EMU_SRC)
 
 tests/bridge_copy_test.exe: tests/bridge_copy_test.c $(SYMCC_LIB) $(EMU_SRC) $(PLATFORM_HDR)
 	$(CC) $(CFLAGS) -o $@ tests/bridge_copy_test.c $(SYMCC_LIB) $(EMU_SRC)
