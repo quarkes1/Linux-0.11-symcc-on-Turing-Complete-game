@@ -102,5 +102,8 @@ if __name__=='__main__':
     root=pathlib.Path(__file__).resolve().parents[1]
     files={'/etc/motd':b'Welcome to SymphonyPlus Linux.\n'}
     for p in sorted((root/'build/user').glob('*.spx')): files['/bin/'+p.stem]=p.read_bytes()
+    for p in sorted((root/'user/native/include').glob('*.h')): files['/include/'+p.name]=p.read_bytes()
+    for p in sorted((root/'build/native').glob('*.sym')):
+        if p.stem in ('crt0','syscall','base','heap','stdio','format','string','convert','divsi3'): files['/lib/'+p.name]=p.read_bytes()
     out=root/'build/rootfs.bin';out.parent.mkdir(exist_ok=True);out.write_bytes(make_image(files,size_bytes=read_config()['SP_DISK_BYTES']))
     print(f'{out}: {out.stat().st_size} bytes')

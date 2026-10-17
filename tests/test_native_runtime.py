@@ -3,6 +3,11 @@ sys.path.insert(0,str(pathlib.Path(__file__).resolve().parent))
 import test_emu_cli
 
 class NativeRuntimeTest(unittest.TestCase):
+    def test_sdk_file_format_and_conversion(self):
+        mod,disk,screen=test_emu_cli.CliTest().file_session('sdkprobe\n')
+        self.assertIn(b'SDK PASS',screen)
+        self.assertEqual(mod.read_file(disk,'/tmp/sdk'),b'alpha\nbeta')
+
     def test_atomic_publication_and_permissions(self):
         mod,disk,screen=test_emu_cli.CliTest().file_session('pubtest\n')
         self.assertIn(b'PUBLISH PASS',screen)

@@ -4,6 +4,7 @@ cd "$(dirname "$0")/.."
 mkdir -p build/interactive
 python scripts/gen_platform.py
 bash scripts/build_user.sh
+bash scripts/build_native_runtime.sh
 python scripts/mkrootfs.py
 objects=()
 while IFS= read -r source; do
