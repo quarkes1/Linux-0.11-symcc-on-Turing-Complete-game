@@ -1,7 +1,48 @@
-import pathlib,sys,struct,unittest,re,json
+import pathlib,sys,struct,unittest,re,json,tempfile,subprocess
 sys.path.insert(0,str(pathlib.Path(__file__).resolve().parent))
 import test_emu_cli
 class NativeCompilerTest(unittest.TestCase):
+    def test_driver_compiles_two_programs_and_default_output(self):
+        mod,disk,screen=test_emu_cli.CliTest().file_session(
+            'cd /tmp\ncat >one.c <<EOF\n#include <stdio.h>\n'
+            'int main(void){puts("DRIVER" " FIRST");return 0;}\nEOF\n'
+            'symcc one.c -o main && ./main\n'
+            'cat >two.c <<EOF\n#include <stdio.h>\n'
+            'int f(int n){int a[2][3]={{1,2,3},{4,5,6}};return a[1][2]+n;}\n'
+            'int main(void){unsigned u=0xffffffffu;char *p="ok";int s=0;for(int i=0;i<4;i++)s+=i;'
+            'if((u>>31)!=1 || u<1u || p[1]!=107)return 4;printf("DRIVER SECOND %d\\n",f(s));return 0;}\nEOF\n'
+            'symcc two.c && ./a.out\n',max_instructions=40000000000)
+        self.assertIn(b'DRIVER FIRST',screen)
+        self.assertIn(b'DRIVER SECOND 12',screen)
+        self.assertNotEqual(mod.read_file(disk,'/tmp/main'),mod.read_file(disk,'/tmp/a.out'))
+        entries=mod.read_file(disk,'/tmp')
+        self.assertFalse(any(entries[i+2:i+16].startswith(b'.s') for i in range(0,len(entries),16) if entries[i:i+2]!=b'\0\0'))
+        with tempfile.TemporaryDirectory() as temp:
+            saved=pathlib.Path(temp)/'saved.bin';saved.write_bytes(disk)
+            keys=pathlib.Path(temp)/'keys.txt';keys.write_bytes(b'/tmp/a.out\n')
+            r=subprocess.run([str(test_emu_cli.ROOT/'emu/emu.exe'),'build/kernel.bin','--disk',str(saved),'--input',str(keys),'--until','DRIVER SECOND 12'],cwd=test_emu_cli.ROOT,capture_output=True,timeout=15)
+            self.assertEqual(r.returncode,0,r.stderr.decode(errors='replace'))
+            self.assertIn(b'DRIVER SECOND 12',r.stdout)
+
+    def test_driver_failures_preserve_previous_executable(self):
+        mod,disk,screen=test_emu_cli.CliTest().file_session(
+            'cd /tmp\ncat >good.c <<E\nint main(void){return 0;}\nE\n'
+            'symcc good.c -o keep && cat keep>before\n'
+            'cat >bad.c <<E\nint main( {\nE\n'
+            'symcc bad.c -o keep && echo wrong>ran || echo syntax>err\n'
+            'cat >bad.c <<E\n#include <missing.h>\nE\n'
+            'symcc bad.c -o keep && echo wrong>ran || echo header>>err\n'
+            'cat >bad.c <<E\nint main(void){return undefined();}\nE\n'
+            'symcc bad.c -o keep && echo wrong>ran || echo link>>err\n'
+            'symcc -Q good.c -o keep || echo option>>err\n'
+            'symcc good.c -o toolongfilenamex || echo name>>err\n'
+            'symcc good.c -o /missing/main && echo wrong>ran || echo parent>>err\n',max_instructions=60000000000)
+        self.assertEqual(mod.read_file(disk,'/tmp/keep'),mod.read_file(disk,'/tmp/before'))
+        self.assertEqual(mod.read_file(disk,'/tmp/err'),b'syntax\nheader\nlink\noption\nname\nparent\n')
+        with self.assertRaises(FileNotFoundError):mod.read_file(disk,'/tmp/ran')
+        entries=mod.read_file(disk,'/tmp')
+        self.assertFalse(any(entries[i+2:i+16].startswith(b'.s') for i in range(0,len(entries),16) if entries[i:i+2]!=b'\0\0'))
+
     def test_real_guest_stages_compile_and_link(self):
         mod,disk,screen=test_emu_cli.CliTest().file_session(
             'cat >/tmp/main.c <<EOF\n#include <stdio.h>\n#define N 5\n'

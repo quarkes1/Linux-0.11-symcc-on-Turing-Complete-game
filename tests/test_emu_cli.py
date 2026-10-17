@@ -5,6 +5,16 @@ def fs_geometry(data):
     ninodes,nzones,imap,zmap,first,shift=struct.unpack_from('>6H',data,1024)
     return {'inode_base':(2+imap+zmap)*1024,'first':first,'nzones':nzones,'zmap_base':(2+imap)*1024}
 class CliTest(unittest.TestCase):
+    def test_instruction_budget_is_checked_and_exhaustion_fails(self):
+        exe=str(ROOT/'emu/emu.exe')
+        for value in ('0','-1','1x','18446744073709551616',''):
+            r=subprocess.run([exe,'build/kernel.bin','--max-instructions',value],cwd=ROOT,capture_output=True,timeout=5)
+            self.assertEqual(r.returncode,2,value)
+        r=subprocess.run([exe,'build/kernel.bin','--max-instructions','1'],cwd=ROOT,capture_output=True,timeout=5)
+        self.assertEqual(r.returncode,1)
+        self.assertIn(b'emulator error=',r.stderr)
+        self.assertIn(b'instructions = 0',r.stderr)
+
     def test_shell_conditions_status_and_complete_parse(self):
         mod,disk,screen=self.file_session(
             'mkdir /tmp/list; cd /tmp/list && echo yes>right\n'
@@ -49,6 +59,14 @@ class CliTest(unittest.TestCase):
             if max_instructions:args+=['--max-instructions',str(max_instructions)]
             r=subprocess.run(args,cwd=ROOT,capture_output=True,timeout=120 if max_instructions else 25)
             self.assertEqual(r.returncode,0,r.stderr.decode(errors='replace'))
+            if max_instructions:
+                import hashlib,json,re
+                measured=re.search(rb'instructions = (\d+)',r.stderr)
+                self.assertIsNotNone(measured,r.stderr.decode(errors='replace'))
+                report=ROOT/'build/native/instructions.json'
+                records=json.loads(report.read_text()) if report.exists() else {}
+                records[hashlib.sha256(script.encode()).hexdigest()[:16]]={'instructions':int(measured[1]),'budget':max_instructions}
+                report.write_text(json.dumps(records,indent=2)+'\n')
             return mod,saved.read_bytes(),r.stdout
     def test_mkdir_rm_redirection_and_heredoc_persist(self):
         mod,disk,screen=self.file_session(
