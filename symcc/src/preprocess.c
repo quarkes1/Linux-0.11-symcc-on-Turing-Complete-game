@@ -205,7 +205,7 @@ static Token *tok_new(int kind) {
 }
 
 /* 合成数字 token（#if 表达式/defined 替换用） */
-static Token *new_num(int64_t val) {
+static Token *new_num(CcInt val) {
     Token *t = tok_new(TK_NUM);
     t->val = val;
     return t;
@@ -349,7 +349,7 @@ static Arg *collect_args(Token *cur, int *n_out, Token **after_out) {
                 ncap *= 2;
                 args = (Arg *)realloc(args, (size_t)ncap * sizeof(Arg));
             }
-            cur_arg = (Arg){NULL, NULL};
+            cur_arg.head=NULL;cur_arg.tail=NULL;
             t = t->next;
             continue;
         }
@@ -551,7 +551,7 @@ static bool at_end(Eval *c) {
     return c->cur == c->end->next;
 }
 
-static int64_t eval_expr(Eval *c);
+static CcInt eval_expr(Eval *c);
 
 static void expect(Eval *c, const char *s) {
     if (!at_end(c) && tok_is(c->cur, s)) {
@@ -562,7 +562,7 @@ static void expect(Eval *c, const char *s) {
     exit(1);
 }
 
-static int64_t eval_primary(Eval *c) {
+static CcInt eval_primary(Eval *c) {
     if (at_end(c)) {
         fprintf(stderr, "unexpected end of #if expression\n");
         exit(1);
@@ -578,7 +578,7 @@ static int64_t eval_primary(Eval *c) {
     }
     if (tok_is(t, "(")) {
         c->cur = t->next;
-        int64_t v = eval_expr(c);
+        CcInt v = eval_expr(c);
         expect(c, ")");
         return v;
     }
@@ -586,7 +586,7 @@ static int64_t eval_primary(Eval *c) {
     exit(1);
 }
 
-static int64_t eval_unary(Eval *c) {
+static CcInt eval_unary(Eval *c) {
     if (tok_is(c->cur, "+")) {
         c->cur = c->cur->next;
         return eval_unary(c);
@@ -606,14 +606,14 @@ static int64_t eval_unary(Eval *c) {
     return eval_primary(c);
 }
 
-static int64_t eval_mul(Eval *c) {
-    int64_t v = eval_unary(c);
+static CcInt eval_mul(Eval *c) {
+    CcInt v = eval_unary(c);
     while (!at_end(c) &&
            (tok_is(c->cur, "*") || tok_is(c->cur, "/") || tok_is(c->cur, "%"))) {
         bool d = tok_is(c->cur, "/");
         bool m = tok_is(c->cur, "%");
         c->cur = c->cur->next;
-        int64_t r = eval_unary(c);
+        CcInt r = eval_unary(c);
         if (d)
             v = r ? v / r : 0;            /* 除零 → 0（C 标准未定义，取 0） */
         else if (m)
@@ -624,30 +624,30 @@ static int64_t eval_mul(Eval *c) {
     return v;
 }
 
-static int64_t eval_add(Eval *c) {
-    int64_t v = eval_mul(c);
+static CcInt eval_add(Eval *c) {
+    CcInt v = eval_mul(c);
     while (!at_end(c) && (tok_is(c->cur, "+") || tok_is(c->cur, "-"))) {
         bool is_add = tok_is(c->cur, "+");
         c->cur = c->cur->next;
-        int64_t r = eval_mul(c);
+        CcInt r = eval_mul(c);
         v = is_add ? v + r : v - r;
     }
     return v;
 }
 
-static int64_t eval_shift(Eval *c) {
-    int64_t v = eval_add(c);
+static CcInt eval_shift(Eval *c) {
+    CcInt v = eval_add(c);
     while (!at_end(c) && (tok_is(c->cur, "<<") || tok_is(c->cur, ">>"))) {
         bool is_shl = tok_is(c->cur, "<<");
         c->cur = c->cur->next;
-        int64_t r = eval_add(c);
+        CcInt r = eval_add(c);
         v = is_shl ? v << (r & 63) : v >> (r & 63);
     }
     return v;
 }
 
-static int64_t eval_rel(Eval *c) {
-    int64_t v = eval_shift(c);
+static CcInt eval_rel(Eval *c) {
+    CcInt v = eval_shift(c);
     while (!at_end(c) &&
            (tok_is(c->cur, "<") || tok_is(c->cur, "<=") ||
             tok_is(c->cur, ">") || tok_is(c->cur, ">="))) {
@@ -655,7 +655,7 @@ static int64_t eval_rel(Eval *c) {
         bool le = tok_is(c->cur, "<=");
         bool gt = tok_is(c->cur, ">");
         c->cur = c->cur->next;
-        int64_t r = eval_shift(c);
+        CcInt r = eval_shift(c);
         if (lt) v = v < r;
         else if (le) v = v <= r;
         else if (gt) v = v > r;
@@ -664,19 +664,19 @@ static int64_t eval_rel(Eval *c) {
     return v;
 }
 
-static int64_t eval_eq(Eval *c) {
-    int64_t v = eval_rel(c);
+static CcInt eval_eq(Eval *c) {
+    CcInt v = eval_rel(c);
     while (!at_end(c) && (tok_is(c->cur, "==") || tok_is(c->cur, "!="))) {
         bool is_eq = tok_is(c->cur, "==");
         c->cur = c->cur->next;
-        int64_t r = eval_rel(c);
+        CcInt r = eval_rel(c);
         v = is_eq ? (v == r) : (v != r);
     }
     return v;
 }
 
-static int64_t eval_bitand(Eval *c) {
-    int64_t v = eval_eq(c);
+static CcInt eval_bitand(Eval *c) {
+    CcInt v = eval_eq(c);
     while (!at_end(c) && tok_is(c->cur, "&")) {
         c->cur = c->cur->next;
         v &= eval_eq(c);
@@ -684,8 +684,8 @@ static int64_t eval_bitand(Eval *c) {
     return v;
 }
 
-static int64_t eval_bitxor(Eval *c) {
-    int64_t v = eval_bitand(c);
+static CcInt eval_bitxor(Eval *c) {
+    CcInt v = eval_bitand(c);
     while (!at_end(c) && tok_is(c->cur, "^")) {
         c->cur = c->cur->next;
         v ^= eval_bitand(c);
@@ -693,8 +693,8 @@ static int64_t eval_bitxor(Eval *c) {
     return v;
 }
 
-static int64_t eval_bitor(Eval *c) {
-    int64_t v = eval_bitxor(c);
+static CcInt eval_bitor(Eval *c) {
+    CcInt v = eval_bitxor(c);
     while (!at_end(c) && tok_is(c->cur, "|")) {
         c->cur = c->cur->next;
         v |= eval_bitxor(c);
@@ -702,21 +702,21 @@ static int64_t eval_bitor(Eval *c) {
     return v;
 }
 
-static int64_t eval_and(Eval *c) {
-    int64_t v = eval_bitor(c);
+static CcInt eval_and(Eval *c) {
+    CcInt v = eval_bitor(c);
     while (!at_end(c) && tok_is(c->cur, "&&")) {
         c->cur = c->cur->next;
-        int64_t r = eval_bitor(c);
+        CcInt r = eval_bitor(c);
         v = v && r;      /* 两侧全算；除零→0，结果与短路一致 */
     }
     return v;
 }
 
-static int64_t eval_or(Eval *c) {
-    int64_t v = eval_and(c);
+static CcInt eval_or(Eval *c) {
+    CcInt v = eval_and(c);
     while (!at_end(c) && tok_is(c->cur, "||")) {
         c->cur = c->cur->next;
-        int64_t r = eval_and(c);
+        CcInt r = eval_and(c);
         v = v || r;
     }
     return v;
@@ -866,12 +866,12 @@ static void skip_expr(Eval *c) {
 
 /* ?: 短路（brief 要求）：条件为真只算 then，为假只算 else；未取分支
  * 用跳过模式消费（结构照常匹配，但不求值、不报解析错误）。 */
-static int64_t eval_expr(Eval *c) {
-    int64_t v = eval_or(c);
+static CcInt eval_expr(Eval *c) {
+    CcInt v = eval_or(c);
     if (!at_end(c) && tok_is(c->cur, "?")) {
         c->cur = c->cur->next;
         if (v) {
-            int64_t then = eval_expr(c);
+            CcInt then = eval_expr(c);
             expect(c, ":");
             skip_expr(c);
             return then;
@@ -884,9 +884,9 @@ static int64_t eval_expr(Eval *c) {
 }
 
 /* 求值表达式链 [head..tail]（已宏展开、defined 已替换） */
-static int64_t eval_chain(Token *head, Token *tail) {
+static CcInt eval_chain(Token *head, Token *tail) {
     Eval c = {head, tail};
-    int64_t v = eval_expr(&c);
+    CcInt v = eval_expr(&c);
     if (!at_end(&c)) {
         fprintf(stderr, "extra tokens in #if expression\n");
         exit(1);
@@ -1393,7 +1393,11 @@ static char *unparse(Token *toks) {
         switch (t->kind) {
         case TK_NUM: {
             char tmp[40];
+            #ifdef SP_NATIVE
+            int l=t->is_unsigned?sprintf(tmp,"%u",(unsigned)t->val):sprintf(tmp,"%d",t->val);
+#else
             int l = sprintf(tmp, "%lld", (long long)t->val);
+#endif
             if (t->is_unsigned)
                 tmp[l++] = 'u';
             grow(&buf, &cap, (size_t)n + (size_t)l + 1);

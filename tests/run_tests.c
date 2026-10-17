@@ -140,5 +140,6 @@ int main(void) {
     /* M2 Task 4 验收：struct 传参 / 返回 / 赋值 / 可变参数 */
     compile_and_run("tests/test_struct_abi.c", 170, NULL, 0, "");
     printf("ALL TESTS PASSED\n");
+    compile_and_run("tests/for_decl_probe.c",0,NULL,0,"");
     return 0;
 }

@@ -44,8 +44,8 @@ static void emit(const char *fmt, ...);   /* 定义在 gen_block_copy 之后 */
 
 /* 块拷贝：r1 = 源地址（低地址），r9 = 目标地址，按 4 字节块复制 size 字节。
  * 约定使用 r2/r3 作暂存（本 helper 内部不调用其他 gen_*，无嵌套冲突） */
-static void gen_block_copy(int64_t size) {
-    for (int64_t off = 0; off + 4 <= size; off += 4) {
+static void gen_block_copy(CcInt size) {
+    for (CcInt off = 0; off + 4 <= size; off += 4) {
         emit("    add r3, r1, %d      ; copy src\n", (int)off);
         emit("    load_32 r2, [r3]\n");
         emit("    add r3, r9, %d      ; copy dst\n", (int)off);
@@ -81,7 +81,7 @@ static void emit(const char *fmt, ...) {
         obj_add_text(cur_obj, buf);
 }
 
-static void err_imm(Token *t, int64_t val) {
+static void err_imm(Token *t, CcInt val) {
     fprintf(stderr, "constant too large for 16-bit immediate: %lld (%.*s)\n",
             (long long)val, t->len, t->loc);
     exit(1);
@@ -101,11 +101,15 @@ static void emit_label(const char *l) {
 /* 数字常量 → 指定寄存器。
  * 立即数上限 16 位：>0xFFFF 拆高位/低位拼接（mov hi; lsl 16; or lo），
  * 上限 0xFFFFFFFF（M2 无 64 位） */
-static void gen_num_reg(int reg, int64_t val, Token *t) {
+static void gen_num_reg(int reg, CcInt val, Token *t) {
+#ifndef SP_NATIVE
     if (val > 0xFFFFFFFFLL || val < 0)
         err_imm(t, val);
-    int64_t hi = (val >> 16) & 0xFFFF;
-    int64_t lo = val & 0xFFFF;
+#else
+    (void)t;
+#endif
+    CcInt hi = (val >> 16) & 0xFFFF;
+    CcInt lo = val & 0xFFFF;
     if (hi) {
         emit("    mov r%d, %lld        ; 常量高位\n", reg, (long long)hi);
         emit("    lsl r%d, r%d, 16\n", reg, reg);
@@ -116,7 +120,7 @@ static void gen_num_reg(int reg, int64_t val, Token *t) {
     }
 }
 
-static void gen_num(int64_t val, Token *t) {
+static void gen_num(CcInt val, Token *t) {
     gen_num_reg(1, val, t);
 }
 
@@ -203,7 +207,7 @@ static void gen_load_bitfield(Node *n) {
         gen_num_reg(2, sh, n->tok);
         emit("    lsr r1, r1, r2\n");
     }
-    int64_t mask = (n->bit_width >= 32) ? 0xFFFFFFFFLL
+    CcInt mask = (n->bit_width >= 32) ? 0xFFFFFFFFLL
                                         : ((1LL << n->bit_width) - 1);
     if (mask != 0xFFFFFFFFLL) {
         gen_num_reg(2, mask, n->tok);
@@ -219,7 +223,7 @@ static void gen_load_bitfield(Node *n) {
 /* 位域存储：r9 = 单元地址，r1 = 值 → 读-改-写单元 */
 static void gen_store_bitfield(Node *n) {
     int sh = 32 - n->bit_offset - n->bit_width;
-    int64_t mask = (n->bit_width >= 32) ? 0xFFFFFFFFLL
+    CcInt mask = (n->bit_width >= 32) ? 0xFFFFFFFFLL
                                         : ((1LL << n->bit_width) - 1);
     emit("    load_32 r2, [r9]    ; bitfield unit\n");
     gen_num_reg(3, mask, n->tok);
@@ -433,11 +437,11 @@ static void gen_expr(Node *n) {
         for (Node *a = n->rhs; a; a = a->next)
             args[na++] = a;
         bool retbuf = is_agg(n->ty);
-        int64_t total = 0;
+        CcInt total = 0;
         for (int k = na - 1; k >= 0; k--) {
             gen_expr(args[k]);
             if (is_agg(args[k]->ty)) {
-                int64_t sz = args[k]->ty->size;
+                CcInt sz = args[k]->ty->size;
                 emit("    sub sp, sp, %d      ; struct arg %d\n", (int)sz, k);
                 emit("    mov r9, sp\n");
                 gen_block_copy(sz);
@@ -676,8 +680,7 @@ static void gen_stmt(Node *n) {
         const char *Lbegin = new_label();
         const char *Lcont = new_label();
         const char *Lend = new_label();
-        if (n->lhs)
-            gen_expr(n->lhs);
+        gen_stmts(n->lhs);
         emit_label(Lbegin);
         if (n->rhs)
             gen_branch_zero(n->rhs, Lend, true);
@@ -804,7 +807,7 @@ static void gen_func(Func *f) {
                            : 0);
     int slot_off = 0;
     for (int k = 0; k < f->nargs; k++) {
-        int64_t psz = ((size_t)f->param_tys[k]->size + 3) & ~3;
+        CcInt psz = ((size_t)f->param_tys[k]->size + 3) & ~3;
         slot_off += (int)psz;
         if (is_agg(f->param_tys[k])) {
             emit("    add r1, r10, %d        ; arg %d src\n", arg_off, k);

@@ -3,6 +3,15 @@ sys.path.insert(0,str(pathlib.Path(__file__).resolve().parent))
 import test_emu_cli
 
 class NativeRuntimeTest(unittest.TestCase):
+    def test_native_core_integer_bounds_and_escaped_strings(self):
+        mod,disk,screen=test_emu_cli.CliTest().file_session(
+            'coreprobe\ncoreprobe decimal && echo bad>/tmp/bad || echo decimal>/tmp/dec\n'
+            'coreprobe hex && echo bad>/tmp/bad || echo hex>/tmp/hex\n')
+        self.assertIn(b'CORE PASS',screen)
+        self.assertEqual(mod.read_file(disk,'/tmp/dec'),b'decimal\n')
+        self.assertEqual(mod.read_file(disk,'/tmp/hex'),b'hex\n')
+        with self.assertRaises(FileNotFoundError):mod.read_file(disk,'/tmp/bad')
+
     def test_sdk_file_format_and_conversion(self):
         mod,disk,screen=test_emu_cli.CliTest().file_session('sdkprobe\n')
         self.assertIn(b'SDK PASS',screen)

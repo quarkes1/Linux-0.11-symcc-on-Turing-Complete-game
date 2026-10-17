@@ -63,13 +63,16 @@ static Type *ty_long(void) {
     return &t;
 }
 
-static Type *ty_array(Type *base, int64_t len) {
+static Type *ty_array(Type *base, CcInt len) {
+    if(len>=0 && base->size>0 && len>0x7fffffff/base->size) {
+        fprintf(stderr,"array size out of range\n");exit(1);
+    }
     Type *t = (Type *)calloc(1, sizeof(Type));
     if (!t) { fprintf(stderr, "out of memory\n"); exit(1); }
     t->kind = TY_ARRAY;
     t->base = base;
     t->array_len = len;
-    t->size = len < 0 ? 0 : (int)(len * (int64_t)base->size);
+    t->size = len < 0 ? 0 : (int)(len * (CcInt)base->size);
     return t;
 }
 
@@ -105,7 +108,7 @@ typedef struct EnumConst {
     struct EnumConst *next;
     char *name;
     int len;
-    int64_t val;
+    CcInt val;
 } EnumConst;
 
 typedef struct Tag {
@@ -152,6 +155,7 @@ static Type *paren_suffix(Type *ty, Token **namep);
 
 static void error_at(Token *t, const char *msg) {
     fprintf(stderr, "parse error at \"%.*s\": %s\n", t->len, t->loc, msg);
+    fprintf(stderr,"near: %.80s\n",t->loc);
     exit(1);
 }
 
@@ -171,7 +175,7 @@ static Node *new_node(int kind, Token *t) {
     return n;
 }
 
-static Node *new_num(int64_t v, Token *t) {
+static Node *new_num(CcInt v, Token *t) {
     Node *n = new_node(ND_NUM, t);
     n->val = v;
     n->ty = ty_int;
@@ -298,7 +302,7 @@ static void add_tdef(Token *t, Type *ty) {
     tdefs = d;    /* 重复定义覆盖（宽松，幂等） */
 }
 
-static void add_enum(Token *t, int64_t val) {
+static void add_enum(Token *t, CcInt val) {
     EnumConst *e = (EnumConst *)calloc(1, sizeof(EnumConst));
     if (!e) { fprintf(stderr, "out of memory\n"); exit(1); }
     e->name = xstrndup(t->loc, (size_t)t->len);
@@ -367,64 +371,64 @@ static Node *new_assign(Node *lhs, Node *rhs, Token *t);  /* 后缀 ++/-- 用 */
 static Node *assign(void);   /* 复合赋值 rhs 用 */
 static char *xstrndup(const char *s, size_t n);  /* label_of 用 */
 
-static int64_t eval_const(Token **rest, Token *t);   /* 主入口 */
-static int64_t eval_ternary(Token **cur);
-static int64_t eval_logor(Token **cur);
-static int64_t eval_logand(Token **cur);
-static int64_t eval_bitor(Token **cur);
-static int64_t eval_bitxor(Token **cur);
-static int64_t eval_bitand(Token **cur);
-static int64_t eval_equality(Token **cur);
-static int64_t eval_rel(Token **cur);
-static int64_t eval_shift(Token **cur);
-static int64_t eval_add(Token **cur);
-static int64_t eval_mul(Token **cur);
-static int64_t eval_unary(Token **cur);
-static int64_t eval_primary(Token **cur);
+static CcInt eval_const(Token **rest, Token *t);   /* 主入口 */
+static CcInt eval_ternary(Token **cur);
+static CcInt eval_logor(Token **cur);
+static CcInt eval_logand(Token **cur);
+static CcInt eval_bitor(Token **cur);
+static CcInt eval_bitxor(Token **cur);
+static CcInt eval_bitand(Token **cur);
+static CcInt eval_equality(Token **cur);
+static CcInt eval_rel(Token **cur);
+static CcInt eval_shift(Token **cur);
+static CcInt eval_add(Token **cur);
+static CcInt eval_mul(Token **cur);
+static CcInt eval_unary(Token **cur);
+static CcInt eval_primary(Token **cur);
 
-static int64_t eval_const(Token **rest, Token *t) {
+static CcInt eval_const(Token **rest, Token *t) {
     Token *cur = t;
-    int64_t v = eval_ternary(&cur);
+    CcInt v = eval_ternary(&cur);
     *rest = cur;
     return v;
 }
 
-static int64_t eval_ternary(Token **cur) {
-    int64_t c = eval_logor(cur);
+static CcInt eval_ternary(Token **cur) {
+    CcInt c = eval_logor(cur);
     if (tok_is(*cur, "?")) {
         *cur = (*cur)->next;
-        int64_t a = eval_ternary(cur);
+        CcInt a = eval_ternary(cur);
         if (!tok_is(*cur, ":"))
             error_at(*cur, "expected ':' in conditional expression");
         *cur = (*cur)->next;
-        int64_t b = eval_ternary(cur);
+        CcInt b = eval_ternary(cur);
         return c ? a : b;
     }
     return c;
 }
 
-static int64_t eval_logor(Token **cur) {
-    int64_t a = eval_logand(cur);
+static CcInt eval_logor(Token **cur) {
+    CcInt a = eval_logand(cur);
     while (tok_is(*cur, "||")) {
         *cur = (*cur)->next;
-        int64_t b = eval_logand(cur);
+        CcInt b = eval_logand(cur);
         a = (a != 0) || (b != 0);
     }
     return a;
 }
 
-static int64_t eval_logand(Token **cur) {
-    int64_t a = eval_bitor(cur);
+static CcInt eval_logand(Token **cur) {
+    CcInt a = eval_bitor(cur);
     while (tok_is(*cur, "&&")) {
         *cur = (*cur)->next;
-        int64_t b = eval_bitor(cur);
+        CcInt b = eval_bitor(cur);
         a = (a != 0) && (b != 0);
     }
     return a;
 }
 
-static int64_t eval_bitor(Token **cur) {
-    int64_t a = eval_bitxor(cur);
+static CcInt eval_bitor(Token **cur) {
+    CcInt a = eval_bitxor(cur);
     while (tok_is(*cur, "|")) {
         *cur = (*cur)->next;
         a |= eval_bitxor(cur);
@@ -432,8 +436,8 @@ static int64_t eval_bitor(Token **cur) {
     return a;
 }
 
-static int64_t eval_bitxor(Token **cur) {
-    int64_t a = eval_bitand(cur);
+static CcInt eval_bitxor(Token **cur) {
+    CcInt a = eval_bitand(cur);
     while (tok_is(*cur, "^")) {
         *cur = (*cur)->next;
         a ^= eval_bitand(cur);
@@ -441,8 +445,8 @@ static int64_t eval_bitxor(Token **cur) {
     return a;
 }
 
-static int64_t eval_bitand(Token **cur) {
-    int64_t a = eval_equality(cur);
+static CcInt eval_bitand(Token **cur) {
+    CcInt a = eval_equality(cur);
     while (tok_is(*cur, "&")) {
         *cur = (*cur)->next;
         a &= eval_equality(cur);
@@ -450,8 +454,8 @@ static int64_t eval_bitand(Token **cur) {
     return a;
 }
 
-static int64_t eval_equality(Token **cur) {
-    int64_t a = eval_rel(cur);
+static CcInt eval_equality(Token **cur) {
+    CcInt a = eval_rel(cur);
     for (;;) {
         if (tok_is(*cur, "==")) {
             *cur = (*cur)->next;
@@ -465,8 +469,8 @@ static int64_t eval_equality(Token **cur) {
     }
 }
 
-static int64_t eval_rel(Token **cur) {
-    int64_t a = eval_shift(cur);
+static CcInt eval_rel(Token **cur) {
+    CcInt a = eval_shift(cur);
     for (;;) {
         if (tok_is(*cur, "<")) {
             *cur = (*cur)->next;
@@ -486,8 +490,8 @@ static int64_t eval_rel(Token **cur) {
     }
 }
 
-static int64_t eval_shift(Token **cur) {
-    int64_t a = eval_add(cur);
+static CcInt eval_shift(Token **cur) {
+    CcInt a = eval_add(cur);
     for (;;) {
         if (tok_is(*cur, "<<")) {
             *cur = (*cur)->next;
@@ -501,8 +505,8 @@ static int64_t eval_shift(Token **cur) {
     }
 }
 
-static int64_t eval_add(Token **cur) {
-    int64_t a = eval_mul(cur);
+static CcInt eval_add(Token **cur) {
+    CcInt a = eval_mul(cur);
     for (;;) {
         if (tok_is(*cur, "+")) {
             *cur = (*cur)->next;
@@ -516,19 +520,19 @@ static int64_t eval_add(Token **cur) {
     }
 }
 
-static int64_t eval_mul(Token **cur) {
-    int64_t a = eval_unary(cur);
+static CcInt eval_mul(Token **cur) {
+    CcInt a = eval_unary(cur);
     for (;;) {
         if (tok_is(*cur, "*")) {
             *cur = (*cur)->next;
             a *= eval_unary(cur);
         } else if (tok_is(*cur, "/")) {
             *cur = (*cur)->next;
-            int64_t b = eval_unary(cur);
+            CcInt b = eval_unary(cur);
             a = b ? a / b : 0;
         } else if (tok_is(*cur, "%")) {
             *cur = (*cur)->next;
-            int64_t b = eval_unary(cur);
+            CcInt b = eval_unary(cur);
             a = b ? a % b : 0;
         } else {
             return a;
@@ -536,7 +540,7 @@ static int64_t eval_mul(Token **cur) {
     }
 }
 
-static int64_t eval_unary(Token **cur) {
+static CcInt eval_unary(Token **cur) {
     Token *t = *cur;
     if (tok_is(t, "+")) {
         *cur = t->next;
@@ -597,7 +601,7 @@ static int64_t eval_unary(Token **cur) {
     return eval_primary(cur);
 }
 
-static int64_t eval_primary(Token **cur) {
+static CcInt eval_primary(Token **cur) {
     Token *t = *cur;
     if (t->kind == TK_NUM) {
         *cur = t->next;
@@ -605,7 +609,7 @@ static int64_t eval_primary(Token **cur) {
     }
     if (tok_is(t, "(")) {
         *cur = t->next;
-        int64_t v = eval_ternary(cur);
+        CcInt v = eval_ternary(cur);
         if (!tok_is(*cur, ")"))
             error_at(*cur, "expected ')' in constant expression");
         *cur = (*cur)->next;
@@ -814,14 +818,15 @@ static Type *paren_suffix(Type *ty, Token **namep) {
 static Type *suffix(Type *base, Token **namep) {
     if (tok_is(tok, "[")) {
         tok = tok->next;
-        int64_t len = -1;
+        CcInt len = -1;
         if (!tok_is(tok, "]"))
             len = eval_const(&tok, tok);
         skip("]");
-        Type *arr = ty_array(base, len);
-        if (base->kind == TY_FUNC)
+        Type *element=suffix(base,namep);
+        Type *arr = ty_array(element, len);
+        if (element->kind == TY_FUNC)
             error_at(tok, "array of functions");
-        return suffix(arr, namep);
+        return arr;
     }
     if (tok_is(tok, "(")) {
         /* 函数类型：解析参数（ANSI 或 K&R 名字列表） */
@@ -1070,7 +1075,7 @@ static Type *enum_decl(void) {
     }
     if (tok_is(tok, "{")) {
         tok = tok->next;
-        int64_t val = 0;
+        CcInt val = 0;
         while (!tok_is(tok, "}")) {
             if (tok->kind == TK_EOF)
                 error_at(tok, "unclosed enum body");
@@ -1192,7 +1197,7 @@ static Node *new_binop(int kind, Node *lhs, Node *rhs, Token *t) {
 }
 
 /* 解析实参列表（tok 在 "(" 上）→ rhs 链表，*nargs = 实参数 */
-static Node *parse_call_args(int64_t *nargs) {
+static Node *parse_call_args(CcInt *nargs) {
     skip("(");
     Node head = {0}, *cur = &head;
     int n = 0;
@@ -1842,7 +1847,7 @@ static Node *expr(void) {
 /* ---------- 语句 ---------- */
 
 /* target[i]（target 是数组表达式，求值 = 地址） */
-static Node *arr_elem(Node *target, int64_t i, Type *elem, Token *t) {
+static Node *arr_elem(Node *target, CcInt i, Type *elem, Token *t) {
     Node *idx = (elem->size == 1) ? new_num(i, t)
                                   : new_binary(ND_MUL, new_num(i, t), new_num(elem->size, t), t);
     Node *addr = new_binary(ND_ADD, target, idx, t);
@@ -1858,7 +1863,7 @@ static Node *init_local(Token **rest, Token *t, Type *ty, Node *target);
 static Node *init_local(Token **rest, Token *t, Type *ty, Node *target) {
     if (ty->kind == TY_ARRAY) {
         Node head = {0}, *cur = &head;
-        int64_t len = ty->array_len;
+        CcInt len = ty->array_len;
         if (t->kind == TK_STR && ty->base->kind == TY_CHAR) {
             /* 字符串初始化：字节 + NUL 置零 */
             if (t->str_len >= len)
@@ -1866,7 +1871,7 @@ static Node *init_local(Token **rest, Token *t, Type *ty, Node *target) {
             for (int i = 0; i < t->str_len; i++)
                 cur = cur->next = new_assign(                                             arr_elem(target, i, ty->base, t),
                                              new_num((unsigned char)t->str[i], t), t);
-            for (int64_t i = t->str_len; i < len; i++)
+            for (CcInt i = t->str_len; i < len; i++)
                 cur = cur->next = new_assign(                                             arr_elem(target, i, ty->base, t),
                                              new_num(0, t), t);
             *rest = t->next;
@@ -1875,7 +1880,7 @@ static Node *init_local(Token **rest, Token *t, Type *ty, Node *target) {
         if (!tok_is(t, "{"))
             error_at(t, "array initializer must be '{' or string");
         tok = t->next;
-        int64_t i;
+        CcInt i;
         for (i = 0; i < len; i++) {
             if (tok_is(tok, "}"))
                 break;
@@ -2155,13 +2160,16 @@ static Node *stmt(void) {
         return n;
     }
     if (tok_is_kw(tok, "for")) {
+        Var *outer_vars=vars;
         Token *t = tok;
         tok = tok->next;
         skip("(");
         Node *init = NULL, *cond = NULL, *inc = NULL;
-        if (!tok_is(tok, ";"))
-            init = expr();
-        skip(";");
+        if(is_declspec_start(tok))init=decl_stmt();
+        else {
+            if (!tok_is(tok, ";"))init=expr();
+            skip(";");
+        }
         if (!tok_is(tok, ";"))
             cond = expr();
         skip(";");
@@ -2175,6 +2183,7 @@ static Node *stmt(void) {
         n->rhs = cond;
         n->els = inc;
         n->body = stmt();
+        vars=outer_vars;
         breakable_depth--;
         loop_depth--;
         return n;
@@ -2275,6 +2284,10 @@ static Node *stmt(void) {
         return n;
     }
     if (tok_is(tok, "{")) {
+        Var *outer_vars=vars;
+        TDef *outer_tdefs=tdefs;
+        EnumConst *outer_enums=enums;
+        Tag *outer_tags=tags;
         tok = tok->next;
         Node head = {0};
         Node *cur = &head;
@@ -2285,9 +2298,11 @@ static Node *stmt(void) {
             if (s) {
                 cur->next = s;
                 cur = s;
+                while(cur->next)cur=cur->next;
             }
         }
         skip("}");
+        vars=outer_vars;tdefs=outer_tdefs;enums=outer_enums;tags=outer_tags;
         return head.next;
     }
     if (tok_is(tok, ";")) {
@@ -2529,7 +2544,7 @@ static void init_bytes(Token **rest, Token *t, Type *ty,
 static void init_bytes(Token **rest, Token *t, Type *ty,
                        unsigned char *buf, int bufsz, Global *g) {
     if (ty->kind == TY_ARRAY) {
-        int64_t len = ty->array_len;
+        CcInt len = ty->array_len;
         if (t->kind == TK_STR && ty->base->kind == TY_CHAR) {
             if (t->str_len > len)
                 error_at(t, "string too long for array");
@@ -2541,7 +2556,7 @@ static void init_bytes(Token **rest, Token *t, Type *ty,
         if (!tok_is(t, "{"))
             error_at(t, "array initializer must be '{' or string");
         tok = t->next;
-        int64_t i;
+        CcInt i;
         for (i = 0; i < len; i++) {
             if (tok_is(tok, "}"))
                 break;
@@ -2573,7 +2588,7 @@ static void init_bytes(Token **rest, Token *t, Type *ty,
                 break;   /* 尾部逗号：{, 后无成员 */
             if (m->bit_width >= 0) {
                 /* 位域：读现有单元，or 入值 */
-                int64_t v = eval_const(&tok, tok);
+                CcInt v = eval_const(&tok, tok);
                 unsigned char *u = buf + m->offset;
                 uint32_t unit = ((uint32_t)u[0] << 24) | ((uint32_t)u[1] << 16) |
                                 ((uint32_t)u[2] << 8) | u[3];
@@ -2644,7 +2659,7 @@ static void init_bytes(Token **rest, Token *t, Type *ty,
      * 常数额折入加法数）。裸 ident 仅限函数/数组（名字退化为地址）。 */
     {
         Token *q = t;
-        int64_t addend = 0;
+        CcInt addend = 0;
         char *addrname = NULL;
         bool saw_addr = false;
         bool aok = true;
@@ -2704,14 +2719,14 @@ static void init_bytes(Token **rest, Token *t, Type *ty,
                 if (!gg && !find_func(qq)) { aok = false; break; }
                 Type *aty = gg ? gg->ty : NULL;
                 Token *qc = qq->next;
-                int64_t a = 0;
+                CcInt a = 0;
                 while (gg && (tok_is(qc, "[") || tok_is(qc, ".") || tok_is(qc, "->"))) {
                     if (tok_is(qc, "[")) {
                         if (aty->kind != TY_ARRAY)
                             error_at(qc, "subscript of non-array in address constant");
                         Token *sav = tok;
                         tok = qc->next;
-                        int64_t idx = eval_const(&tok, tok);
+                        CcInt idx = eval_const(&tok, tok);
                         qc = tok;
                         tok = sav;
                         if (!tok_is(qc, "]"))
@@ -2770,7 +2785,7 @@ static void init_bytes(Token **rest, Token *t, Type *ty,
                 p->kind = TK_EOF;
                 Token *sav = tok;
                 tok = q;
-                int64_t v = eval_const(&tok, tok);
+                CcInt v = eval_const(&tok, tok);
                 Token *endpos = tok;
                 p->kind = save_kind;
                 tok = sav;
@@ -2795,7 +2810,7 @@ static void init_bytes(Token **rest, Token *t, Type *ty,
             return;
         }
     }
-    int64_t v = eval_const(&tok, tok);
+    CcInt v = eval_const(&tok, tok);
     if (ty->kind == TY_CHAR) {
         buf[0] = (unsigned char)(v & 0xFF);
     } else if (ty->kind == TY_SHORT) {

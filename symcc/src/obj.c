@@ -94,17 +94,21 @@ void obj_free(Obj *o) {
     free(o);
 }
 
-static void add_line(char ***lines, int *n, const char *line) {
-    *lines = (char **)realloc(*lines, (size_t)(*n + 1) * sizeof **lines);
-    if (!*lines) { fprintf(stderr, "out of memory\n"); exit(1); }
+static void add_line(char ***lines, int *n,int *capacity,const char *line) {
+    if(*n==*capacity) {
+        int cap=*capacity?*capacity*2:64;
+        char **next=(char **)realloc(*lines,(size_t)cap*sizeof **lines);
+        if(!next){fprintf(stderr,"out of memory\n");exit(1);}
+        *lines=next;*capacity=cap;
+    }
     (*lines)[*n] = (char *)malloc(strlen(line) + 1);
     if (!(*lines)[*n]) { fprintf(stderr, "out of memory\n"); exit(1); }
     strcpy((*lines)[*n], line);
     (*n)++;
 }
 
-void obj_add_text(Obj *o, const char *line) { add_line(&o->text_lines, &o->n_text, line); }
-void obj_add_data(Obj *o, const char *line) { add_line(&o->data_lines, &o->n_data, line); }
+void obj_add_text(Obj *o, const char *line) { add_line(&o->text_lines, &o->n_text,&o->text_capacity,line); }
+void obj_add_data(Obj *o, const char *line) { add_line(&o->data_lines, &o->n_data,&o->data_capacity,line); }
 
 void obj_add_symbol(Obj *o, const char *name, bool is_data, int segment,
                     long offset, long size) {
