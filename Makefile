@@ -80,6 +80,10 @@ symcc/symcc.exe symld/symld.exe tests/run_tests.exe tests/link_test.exe tests/us
 
 all: tests/platform_test.exe tests/emu_io_test.exe tests/user_link_test.exe tests/shell_test.exe
 all: tests/tick_test.exe
+all: tests/shell_parse_test.exe
+
+tests/shell_parse_test.exe: tests/shell_parse_test.c user/lib/shell_parse.c user/include/shell.h
+	$(CC) $(CFLAGS) -Iuser/include -o $@ tests/shell_parse_test.c user/lib/shell_parse.c
 
 tests/tick_test.exe: tests/tick_test.c Reference/Linux-0.11-main/kernel/symplus/tick.c
 	$(CC) $(CFLAGS) -o $@ $^
