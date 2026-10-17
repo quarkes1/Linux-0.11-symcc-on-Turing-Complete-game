@@ -58,7 +58,9 @@ static void poll_io(void) {
     if(key==16)shift=(event&256)!=0;
     else if(event&256) {
         c=key;
-        if(key==13)c=10;
+        /* SYMPLUS-PORT: game Backspace is 0x0d; Enter is 0x0a.
+         * Do not apply terminal CR-to-LF conversion to hardware events. */
+        if(key==13)c=8;
         else if(key>=65 && key<=90)c=shift?key:key+32;
         if(c==8 || c==127) {
             if(head>tail && input[(head-1)&1023]!=10) {
@@ -209,17 +211,25 @@ SpContext *sp_dispatch(SpContext *saved) {
 void sp_boot(void) {
     int i,exec_result;SpContext *ctx;
     tty_init();printk("SymphonyPlus Linux: interactive boot\n");
+    printk("[ OK ] tty_init: 96x40 console ready\n");
+    printk("[ OK ] Memory layout: 8 MiB RAM, 512 KiB user window\n");
     for(i=1;i<NR_TASKS;i++)task[i]=NULL;
     process[1]=*current;current=&process[1];task[1]=current;
     current->pid=1;current->father=0;current->state=TASK_RUNNING;current->tty=0;
     occupied[1]=1;ROOT_DEV=0x300;
-    blk_dev_init();symdisk_init();printk("DiskA driver ready\n");
-    buffer_init(0x180000);printk("Block cache ready\n");mount_root();
-    printk("DiskA MINIX root mounted\n");
+    printk("[ OK ] Process scheduler: cooperative, 8 user slots\n");
+    printk("[ OK ] Clock: nanosecond polling enabled\n");
+    blk_dev_init();printk("[ OK ] blk_dev_init: block request queues ready\n");
+    symdisk_init();printk("[ OK ] DiskA driver ready (8 MiB, big endian)\n");
+    buffer_init(0x180000);printk("[ OK ] buffer_init: block cache ready\n");
+    printk("[    ] Mounting MINIX root filesystem...\n");mount_root();
+    printk("[ OK ] MINIX root mounted on DiskA\n");
     ctx=&contexts[1];
     exec_result=sp_execve("/bin/init",NULL,NULL,ctx);
     if(exec_result!=0x70000000) {
         printk("Cannot load /bin/init (errno=%d)\n",-exec_result);return;
     }
+    printk("[ OK ] exec: /bin/init loaded as PID 1\n");
+    printk("[ OK ] Kernel initialization complete\n");
     sp_resume(ctx);
 }

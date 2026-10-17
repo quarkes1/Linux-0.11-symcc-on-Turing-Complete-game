@@ -6,6 +6,7 @@ int main(void) {
     if(fd<0)_exit(1);
     if(fd!=0){dup2(fd,0);close(fd);}dup2(0,1);dup2(0,2);
     puts("Welcome to SymphonyPlus Linux.\n");
+    puts("\033[2J\033[H");
     for(;;) {
         pid=fork();
         if(pid==0){execve("/bin/sh",args,0);puts("init: cannot load sh\n");_exit(127);}

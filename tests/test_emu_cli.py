@@ -2,13 +2,32 @@ import pathlib,subprocess,tempfile,unittest,struct
 import importlib.util
 ROOT=pathlib.Path(__file__).resolve().parents[1]
 class CliTest(unittest.TestCase):
+    def test_ls_options_operands_and_hidden_entries(self):
+        spec=importlib.util.spec_from_file_location('mkrootfs',ROOT/'scripts/mkrootfs.py')
+        mod=importlib.util.module_from_spec(spec);spec.loader.exec_module(mod)
+        files={'/bin/'+p.stem:p.read_bytes() for p in (ROOT/'build/user').glob('*.spx')}
+        files['/etc/.secret']=b'abc'
+        files['/etc/motd']=b'Welcome to SymphonyPlus Linux.\n'
+        with tempfile.TemporaryDirectory() as temp:
+            disk=pathlib.Path(temp)/'fixture.bin';disk.write_bytes(mod.make_image(files))
+            keys=pathlib.Path(temp)/'keys.txt'
+            for flags in ['-la','-al','-a -l']:
+                keys.write_text('ls '+flags+' /etc\n',encoding='ascii')
+                r=subprocess.run([str(ROOT/'emu/emu.exe'),'build/kernel.bin','--disk',str(disk),'--input',str(keys),'--until','-rw-r--r-- 1 0 0 3 .secret'],cwd=ROOT,capture_output=True,timeout=10)
+                self.assertEqual(r.returncode,0,r.stderr.decode(errors='replace'))
+                self.assertIn(b'-rw-r--r-- 1 0 0 3 .secret',r.stdout)
+            keys.write_text('ls /etc\nls -l -- /etc/motd /dev/tty0\n',encoding='ascii')
+            r=subprocess.run([str(ROOT/'emu/emu.exe'),'build/kernel.bin','--disk',str(disk),'--input',str(keys),'--until','crw-rw-rw- 1 0 0 0 /dev/tty0'],cwd=ROOT,capture_output=True,timeout=10)
+            self.assertEqual(r.returncode,0,r.stderr.decode(errors='replace'))
+            self.assertNotIn(b'.secret',r.stdout)
+            self.assertIn(b'-rw-r--r-- 1 0 0 31 /etc/motd',r.stdout)
     def test_boot_disk_and_explicit_writeback(self):
         source=ROOT/'build/rootfs.bin';before=source.read_bytes()
         with tempfile.TemporaryDirectory() as temp:
             out=pathlib.Path(temp)/'copy.bin'
-            result=subprocess.run([str(ROOT/'emu/emu.exe'),'build/kernel.bin','--disk','build/rootfs.bin','--until','symplus$ ','--write-disk',str(out)],cwd=ROOT,capture_output=True,timeout=30)
+            result=subprocess.run([str(ROOT/'emu/emu.exe'),'build/kernel.bin','--disk','build/rootfs.bin','--until','symplus:/$ ','--write-disk',str(out)],cwd=ROOT,capture_output=True,timeout=30)
             self.assertEqual(result.returncode,0,result.stderr.decode(errors='replace'))
-            self.assertIn(b'symplus$',result.stdout)
+            self.assertIn(b'symplus:/$',result.stdout)
             self.assertEqual(len(out.read_bytes()),8388608)
         self.assertEqual(source.read_bytes(),before)
     def test_reject_bad_option(self):
@@ -39,9 +58,9 @@ class CliTest(unittest.TestCase):
             first=subprocess.run([str(ROOT/'emu/emu.exe'),'build/kernel.bin','--disk','build/rootfs.bin','--input',str(keys),'--until','FORK PASS','--write-disk',str(disk)],cwd=ROOT,capture_output=True,timeout=15)
             self.assertEqual(first.returncode,0,first.stderr.decode(errors='replace'))
             keys.write_bytes(b'cat /tmp/probe\n')
-            second=subprocess.run([str(ROOT/'emu/emu.exe'),'build/kernel.bin','--disk',str(disk),'--input',str(keys),'--until','ABsymplus$'],cwd=ROOT,capture_output=True,timeout=15)
+            second=subprocess.run([str(ROOT/'emu/emu.exe'),'build/kernel.bin','--disk',str(disk),'--input',str(keys),'--until','ABsymplus:/$'],cwd=ROOT,capture_output=True,timeout=15)
             self.assertEqual(second.returncode,0,second.stderr.decode(errors='replace'))
-            self.assertIn(b'ABsymplus$',second.stdout)
+            self.assertIn(b'ABsymplus:/$',second.stdout)
     def test_corrupt_directory_cannot_modify_superblock(self):
         data=bytearray((ROOT/'build/rootfs.bin').read_bytes())
         struct.pack_into('>H',data,4096+4*32+14,1)

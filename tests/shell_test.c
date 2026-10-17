@@ -3,16 +3,32 @@
 #include <string.h>
 #include "emu/emu.h"
 static const char *script="ls /bin\ncat /etc/motd\necho hello\nforktest\nnosuchcommand\necho abx\bC\ncd /etc\ncat motd\nexit\necho finished\n";
-static int input_at,can_type,shift_event;
+static int input_at,can_type,shift_event,release_event;
 static unsigned char queued;
 static int fork_seen,error_seen,upper_seen,proc_seen,orphan_seen,exec_seen,reg_seen,mode;
+static int boot_seen,welcome_seen,clean_seen,cwd_seen,pwd_seen,long_seen,dots_seen,badflag_seen;
+static int nested_seen;
+static int row_is(const char *screen,const char *want);
+static int last_row_is(const char *screen,const char *want) {
+    for(int row=39;row>=0;row--) {
+        int n=96;while(n>0 && screen[row*96+n-1]==' ')n--;
+        if(n)return n==(int)strlen(want) && !memcmp(screen+row*96,want,n);
+    }
+    return 0;
+}
+static int prompt(const char *screen) {
+    return last_row_is(screen,"symplus:/$") || last_row_is(screen,"symplus:/etc$");
+}
 static char prior[3840];static uint64_t stable_since;static int stress_lines[100];
 static uint32_t keyboard(void *p) {
     unsigned char c;(void)p;
     if(shift_event==1){shift_event=2;return 0x100u|queued;}
     if(shift_event==2){shift_event=0;return 16;}
+    if(release_event){release_event=0;return 13;}
     if(!can_type || !script[input_at])return 0;
     c=script[input_at++];if(c=='\n')can_type=0;
+    /* Actual installed-game map: Backspace=0x0d, Enter=0x0a. */
+    if(mode==5 && c=='\b'){release_event=1;return 0x10d;}
     if(c>='A' && c<='Z'){queued=c;shift_event=1;return 0x110;}
     return 0x100u|c;
 }
@@ -38,18 +54,33 @@ static int seen(const EmuResult *r,uint64_t n,void *p) {
         }
     }
     int stable=n-stable_since>=8192;
-    if(stable && row_is(screen,"symplus$"))can_type=1;
+    if(row_is(screen,"[ OK ] MINIX root mounted on DiskA"))boot_seen=1;
+    if(row_is(screen,"Welcome to SymphonyPlus Linux."))welcome_seen=1;
+    if(stable && prompt(screen)) {
+        if(mode==4 && script+input_at==strstr(script,"sh\npwd\n")+7)
+            nested_seen=last_row_is(screen,"symplus:/etc$");
+        if(!input_at && row_is(screen,"symplus:/$") &&
+           !row_is(screen,"Welcome to SymphonyPlus Linux.") &&
+           !row_is(screen,"SymphonyPlus Linux: interactive boot"))clean_seen=1;
+        can_type=1;
+    }
+    cwd_seen|=row_is(screen,"symplus:/etc$");pwd_seen|=row_is(screen,"/etc");
+    long_seen|=row_is(screen,"-rw-r--r-- 1 0 0 31 motd");
+    dots_seen|=row_is(screen,"drwxr-xr-x 2 0 0 48 .");
+    badflag_seen|=row_is(screen,"ls: unknown option: z");
     fork_seen|=row_is(screen,"FORK PASS");error_seen|=row_is(screen,"nosuchcommand: not found");
     upper_seen|=row_is(screen,"abC");proc_seen|=row_is(screen,"PROC PASS");
     orphan_seen|=row_is(screen,"ORPHAN PASS");exec_seen|=row_is(screen,"EXEC PASS");
     reg_seen|=row_is(screen,"REG PASS");
     if(mode==1) {
         int count=0;for(int i=0;i<100;i++)count+=stress_lines[i];
-        return count==100 && stable && row_is(screen,"stressdone") && row_is(screen,"symplus$");
+        return count==100 && stable && row_is(screen,"stressdone") && prompt(screen);
     }
-    if(mode==2)return reg_seen && proc_seen && orphan_seen && exec_seen && stable && row_is(screen,"finished") && row_is(screen,"symplus$");
-    if(mode==3)return row_is(screen,"line too long") && row_is(screen,"aftertty") && stable && row_is(screen,"symplus$");
-    return fork_seen && error_seen && upper_seen && stable && row_is(screen,"finished") && row_is(screen,"symplus$");
+    if(mode==2)return reg_seen && proc_seen && orphan_seen && exec_seen && stable && row_is(screen,"finished") && prompt(screen);
+    if(mode==3)return row_is(screen,"line too long") && row_is(screen,"aftertty") && stable && prompt(screen);
+    if(mode==4)return stable && row_is(screen,"uidone") && prompt(screen);
+    if(mode==5)return stable && row_is(screen,"keydone") && prompt(screen);
+    return fork_seen && error_seen && upper_seen && stable && row_is(screen,"finished") && prompt(screen);
 }
 static unsigned char *readfile(const char *s,size_t *len) {
     FILE *f=fopen(s,"rb");unsigned char *p;long n;
@@ -67,6 +98,10 @@ int main(int argc,char **argv) {
     } else if(argc>1 && !strcmp(argv[1],"--tty")) {
         mode=3;strcpy(stress,"echo ");memset(stress+5,'x',1100);
         strcpy(stress+1105,"\necho aftertty\n");script=stress;
+    } else if(argc>1 && !strcmp(argv[1],"--ui")) {
+        mode=4;script="ls -la /etc\nls -z\ncd /etc\nsh\npwd\nexit\npwd\ncd ../etc/./\ncd /missing\npwd\necho uidone\n";
+    } else if(argc>1 && !strcmp(argv[1],"--keys")) {
+        mode=5;script="\becho keyx\bOK\necho keydone\n";
     }
     size_t bn,dn;unsigned char *bin=readfile("build/kernel.bin",&bn),*disk=readfile("build/rootfs.bin",&dn);
     EmuOptions opt={0};EmuResult r;
@@ -76,5 +111,14 @@ int main(int argc,char **argv) {
     for(int i=0;i<40;i++) { fwrite(r.mem+0x2000+i*96,1,96,stdout);putchar('\n'); }
     fprintf(stderr,"stop=%d error=%d instructions=%llu\n",r.stop_reason,r.error,(unsigned long long)r.instructions);
     int ok=r.stop_reason==1 && !r.error && r.mem[0x1fff]==0xa5 && r.mem[0x2f00]==0x5a;
+    if(mode==4) {
+        fprintf(stderr,"boot=%d welcome=%d clear=%d cwd=%d pwd=%d long=%d dots=%d badflag=%d\n",boot_seen,welcome_seen,clean_seen,cwd_seen,pwd_seen,long_seen,dots_seen,badflag_seen);
+        fprintf(stderr,"nested=%d final_cwd=%d\n",nested_seen,last_row_is((char *)r.mem+0x2000,"symplus:/etc$"));
+        ok=ok && boot_seen && welcome_seen && clean_seen && cwd_seen && pwd_seen && long_seen && dots_seen && badflag_seen && nested_seen && last_row_is((char *)r.mem+0x2000,"symplus:/etc$");
+    }
+    if(mode==5) {
+        fprintf(stderr,"edited=%d premature=%d\n",row_is((char *)r.mem+0x2000,"keyOK"),row_is((char *)r.mem+0x2000,"keyx"));
+        ok=ok && row_is((char *)r.mem+0x2000,"keyOK") && !row_is((char *)r.mem+0x2000,"keyx");
+    }
     free(bin);free(disk);free(r.mem);free(r.disk);return ok?0:1;
 }
