@@ -59,6 +59,8 @@ test: all m3-image system-image
 	tests/shell_test.exe --tty
 	tests/shell_test.exe --ui
 	tests/shell_test.exe --keys
+	tests/shell_test.exe --symbols
+	tests/shell_test.exe --files
 	tests/tick_test.exe
 	python -m unittest discover -s tests -p test_mkrootfs.py
 	python -m unittest discover -s tests -p test_emu_cli.py

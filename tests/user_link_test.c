@@ -10,7 +10,7 @@ static void high_program(void) {
     LinkOptions opt={0x200000,0x270000,0x100,0x104,SP_IMAGE_USER};
     LinkError le;AsmError ae;FILE *crt=fopen("tests/user_start.tmp","wb"),*out=tmpfile();
     unsigned char *ram=calloc(0x280000,1),header[28];EmuResult r;
-    const char *source="int far(void); int main(void){int (*f)(void)=far; int a=-1;unsigned b=0xffffffff; if(f()!=77)return 1; if(!(a<0 && a<=0 && 0>a && 0>=a && a!=0 && a== -1))return 2; if(!(b>1 && b>=1 && 1<b && 1<=b))return 3;return 0;}";
+    const char *source="int far(void); int main(void){int (*f)(void)=far; int a=-1;unsigned b=0xffffffff;char *s=\"a;@missing//b\"; if(f()!=77)return 1; if(!(a<0 && a<=0 && 0>a && 0>=a && a!=0 && a== -1))return 2; if(!(b>1 && b>=1 && 1<b && 1<=b))return 3;if(s[1]!=59 || s[2]!=64 || s[10]!=47 || s[12]!=98)return 4;return 0;}";
     assert(crt && out && ram);
     fputs("_start:\n mov sp,39\n lsl sp,sp,16\n or sp,sp,65280\n call main\n jmp 0x140\n",crt);fclose(crt);
     for(int i=0;i<20000;i++)obj_add_text(padding,"    nop");

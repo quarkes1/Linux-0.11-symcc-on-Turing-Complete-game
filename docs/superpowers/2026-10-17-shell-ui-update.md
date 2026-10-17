@@ -1,5 +1,8 @@
 # Shell 交互与启动显示更新
 
+本记录保留该次更新的验收与摘要。后续文件操作、heredoc 和 Shift 符号输入见
+[文件操作更新记录](2026-10-17-file-shell-update.md)，当前镜像以该记录为准。
+
 在原目录的 `codex/fork-shell-native` 分支实现，未创建 worktree。
 
 ## 行为

@@ -45,6 +45,11 @@ static uint32_t keyboard(void *opaque) {
     if(c->shift_pending==2){c->shift_pending=0;return 16;}
     if(c->input) {
         ch=fgetc(c->input);if(ch==EOF)return 0;
+        if(ch=='\r') {
+            int next=fgetc(c->input);
+            if(next!='\n' && next!=EOF)ungetc(next,c->input);
+            ch='\n';
+        }
     } else {
 #ifdef _WIN32
         if(!_kbhit())return 0;

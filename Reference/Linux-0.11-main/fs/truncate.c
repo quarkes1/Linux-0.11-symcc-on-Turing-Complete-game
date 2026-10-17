@@ -8,13 +8,20 @@
 
 #include <sys/stat.h>
 
+/* SYMPLUS-PORT: never interpret filesystem metadata as indirect zone tables. */
+static int valid_indirect(int dev,int block)
+{
+    struct super_block *s=get_super(dev);
+    return s && block>=s->s_firstdatazone && block<s->s_nzones;
+}
+
 static void free_ind(int dev,int block)
 {
 	struct buffer_head * bh;
 	unsigned short * p;
 	int i;
 
-	if (!block)
+	if (!valid_indirect(dev,block))
 		return;
 	if (bh=bread(dev,block)) {
 		p = (unsigned short *) bh->b_data;
@@ -32,7 +39,7 @@ static void free_dind(int dev,int block)
 	unsigned short * p;
 	int i;
 
-	if (!block)
+	if (!valid_indirect(dev,block))
 		return;
 	if (bh=bread(dev,block)) {
 		p = (unsigned short *) bh->b_data;

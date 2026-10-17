@@ -28,6 +28,14 @@ mingw32-make test
 help
 ls /bin
 ls -la /etc
+mkdir /tmp/demo
+cat > /tmp/demo/note <<EOF
+hello from SymphonyPlus
+EOF
+cat /tmp/demo/note
+echo another line >> /tmp/demo/note
+rm /tmp/demo/note
+rm -r /tmp/demo
 cat /etc/motd
 echo hello
 cd /etc
@@ -45,6 +53,12 @@ exit
 提示符显示当前绝对目录，例如 `cd /etc` 后显示 `symplus:/etc$ `。
 `ls` 支持 `-a`（显示隐藏项）、`-l`（权限、链接数、UID、GID、字节数），可组合为 `-la` / `-al`，
 可指定多个路径，并用 `--` 结束参数解析。默认隐藏以点开头的条目。
+`mkdir` 创建目录；`rm` 删除文件，`rm -r` 递归删除目录。支持多个路径和 `--`；递归删除拒绝根目录、`.`、`..`。
+
+`>` 创建或覆盖文件，`>>` 追加，`<` 从文件读取；`cat` 无文件参数时复制标准输入。
+`cat > file <<EOF` 后出现 `> ` 提示符，逐行输入内容，单独输入 `EOF` 结束；结束标记不会写入文件。
+也兼容 `cat file <<EOF` 写文件简写。正文保持原样，每行最多 254 个字符加换行；超长或写盘失败会报错并读到结束标记，避免将正文当作命令执行。
+支持单/双引号包住字面量和操作符两边省略空格；不做变量、命令或通配符展开，每条命令最多一个输入和一个输出重定向。
 `forktest` 检查内存隔离、共享文件偏移及退出状态；`proctest` 检查槽耗尽、64 次回收和孤儿收养；
 `execprobe` 检查损坏可执行文件、参数限制和指针边界。
 
@@ -54,9 +68,10 @@ exit
 
 当前限制：最多 8 个用户进程（含 init 和 shell）；每个进程有 512KB 用户窗口，工具链默认保留 64KB 栈空间。
 采用调用边界的合作式切换，无系统调用的死循环不会被抢占。无硬件内存保护。
-命令行支持空白分词、退格和大小写，不支持管道、重定向、引号和后台作业。
+命令行支持退格、大小写、字面量引号、文件重定向和 heredoc；不支持管道和后台作业。
 本机游戏键码为 Backspace=`0x0D`、Enter=`0x0A`；驱动将前者处理为删除，后者提交命令，
 并兼容 ASCII 退格 `0x08` / `0x7F`。宿主模拟器在输入边界将终端 CR 转为 LF。
+左右 Shift 独立跟踪，支持美式键位符号映射：`Shift+,` 为 `<`，`Shift+.` 为 `>`，以及 `!@#$%^&*()_+{}|:"~?`。
 帧缓冲固定在 `0x2000`，链接器已明确避让；用户程序位于 `0x200000`，通过固定低地址网关完成长分支和系统调用。
 游戏键码、真实运行速度和持久 RAM 保存行为应在游戏验收中确认。
 
@@ -69,6 +84,7 @@ bash scripts/build_kernel.sh --m3
 
 新增实现设计与计划见 `docs/superpowers/specs/2026-10-17-fork-disk-shell-design.md` 和
 `docs/superpowers/plans/2026-10-17-fork-disk-shell.md`。
+文件操作和 heredoc 更新见 [验收记录](docs/superpowers/2026-10-17-file-shell-update.md)。
 
 ---
 

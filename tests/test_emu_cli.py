@@ -2,6 +2,101 @@ import pathlib,subprocess,tempfile,unittest,struct
 import importlib.util
 ROOT=pathlib.Path(__file__).resolve().parents[1]
 class CliTest(unittest.TestCase):
+    def file_session(self,script):
+        spec=importlib.util.spec_from_file_location('mkrootfs',ROOT/'scripts/mkrootfs.py')
+        mod=importlib.util.module_from_spec(spec);spec.loader.exec_module(mod)
+        files={'/bin/'+p.stem:p.read_bytes() for p in (ROOT/'build/user').glob('*.spx')}
+        files['/etc/finish']=b'FILE WORKFLOW PASS\n'
+        with tempfile.TemporaryDirectory() as temp:
+            disk=pathlib.Path(temp)/'fixture.bin';disk.write_bytes(mod.make_image(files))
+            saved=pathlib.Path(temp)/'saved.bin';keys=pathlib.Path(temp)/'keys.txt'
+            keys.write_bytes((script+'sync\ncat /etc/finish\n').encode('ascii'))
+            r=subprocess.run([str(ROOT/'emu/emu.exe'),'build/kernel.bin','--disk',str(disk),'--input',str(keys),'--until','FILE WORKFLOW PASS','--write-disk',str(saved)],cwd=ROOT,capture_output=True,timeout=25)
+            self.assertEqual(r.returncode,0,r.stderr.decode(errors='replace'))
+            return mod,saved.read_bytes(),r.stdout
+    def test_mkdir_rm_redirection_and_heredoc_persist(self):
+        mod,disk,screen=self.file_session(
+            'mkdir /tmp/work /tmp/gone\n'
+            'cat >/tmp/work/note <<EOF\nalpha\nbeta\nEOF\n'
+            'echo tail>>/tmp/work/note\n'
+            'cat </tmp/work/note >/tmp/copy\n'
+            'cat /tmp/short <<END\nshorthand\nEND\n'
+            'cat >/tmp/empty <<END\nEND\n'
+            'mkdir /tmp/gone/sub\necho x>/tmp/gone/sub/.hidden\n'
+            'rm -r /tmp/gone\n'
+            'echo doomed>/tmp/remove\nrm /tmp/remove\n'
+            'rm /tmp/work\n')
+        try:note=mod.read_file(disk,'/tmp/work/note')
+        except FileNotFoundError:self.fail('guest did not create /tmp/work/note')
+        self.assertEqual(note,b'alpha\nbeta\ntail\n')
+        self.assertEqual(mod.read_file(disk,'/tmp/copy'),b'alpha\nbeta\ntail\n')
+        self.assertEqual(mod.read_file(disk,'/tmp/short'),b'shorthand\n')
+        self.assertEqual(mod.read_file(disk,'/tmp/empty'),b'')
+        for path in ['/tmp/gone','/tmp/remove']:
+            with self.assertRaises(FileNotFoundError):mod.read_file(disk,path)
+        self.assertIn(b'rm: is a directory',screen)
+        with tempfile.TemporaryDirectory() as temp:
+            saved=pathlib.Path(temp)/'saved.bin';saved.write_bytes(disk)
+            keys=pathlib.Path(temp)/'keys.txt';keys.write_bytes(b'cat /tmp/copy\n')
+            r=subprocess.run([str(ROOT/'emu/emu.exe'),'build/kernel.bin','--disk',str(saved),'--input',str(keys),'--until','tail'],cwd=ROOT,capture_output=True,timeout=10)
+            self.assertEqual(r.returncode,0,r.stderr.decode(errors='replace'))
+            self.assertIn(b'alpha',r.stdout);self.assertIn(b'beta',r.stdout)
+    def test_bad_redirection_and_recursive_dot_preserve_files(self):
+        mod,disk,screen=self.file_session(
+            'mkdir /tmp/keep\necho intact>/tmp/keep/a\n'
+            'echo lost>/tmp/keep/a >\n'
+            'rm -r /tmp/keep/.\nrm -r /tmp/keep/..\n'
+            'cat <<END >/no/such/file\nignored\nEND\n')
+        self.assertEqual(mod.read_file(disk,'/tmp/keep/a'),b'intact\n')
+        self.assertIn(b'sh: syntax error',screen)
+        self.assertIn(b'rm: refusing',screen)
+    def test_crlf_script_does_not_insert_blank_heredoc_lines(self):
+        mod,disk,screen=self.file_session('cat >/tmp/crlf <<EOF\r\nfirst\r\nsecond\r\nEOF\r\n')
+        self.assertEqual(mod.read_file(disk,'/tmp/crlf'),b'first\nsecond\n')
+    def test_failed_heredoc_spool_does_not_execute_body(self):
+        mod,disk,screen=self.file_session('echo keep>/etc/keep\nrm -r /tmp\ncat <<EOF\nrm /etc/keep\nEOF\n')
+        try:data=mod.read_file(disk,'/etc/keep')
+        except FileNotFoundError:self.fail('heredoc body ran as a command after spool failure')
+        self.assertEqual(data,b'keep\n')
+    def test_heredoc_long_line_is_drained_without_truncating_target(self):
+        mod,disk,screen=self.file_session('echo keep>/tmp/keep\ncat >/tmp/keep <<EOF\n'+'x'*300+'\nrm /tmp/keep\nEOF\n')
+        self.assertEqual(mod.read_file(disk,'/tmp/keep'),b'keep\n')
+    def test_repeated_heredocs_release_descriptors_and_temporary_names(self):
+        mod,disk,screen=self.file_session('cat >/tmp/empty <<E\nE\n'*12)
+        self.assertEqual(mod.read_file(disk,'/tmp/empty'),b'')
+        entries=mod.read_file(disk,'/tmp')
+        names={entries[i+2:i+16].rstrip(b'\0') for i in range(0,len(entries),16) if entries[i:i+2]!=b'\0\0'}
+        self.assertEqual(names,{b'.',b'..',b'empty'})
+    def test_corrupt_indirect_zones_cannot_free_root_directory(self):
+        spec=importlib.util.spec_from_file_location('mkrootfs',ROOT/'scripts/mkrootfs.py')
+        mod=importlib.util.module_from_spec(spec);spec.loader.exec_module(mod)
+        files={'/bin/'+p.stem:p.read_bytes() for p in (ROOT/'build/user').glob('*.spx')}
+        files['/etc/victim']=b'x'*(9*1024)
+        files['/etc/finish']=b'CORRUPTION CHECK DONE\n'
+        original=mod.make_image(files)
+        directory=mod.read_file(original,'/etc')
+        ino=next(struct.unpack_from('>H',directory,i)[0] for i in range(0,len(directory),16) if directory[i+2:i+16].rstrip(b'\0')==b'victim')
+        inode=4096+(ino-1)*32
+        rootzone=struct.unpack_from('>H',original,4096+14)[0]
+        bitmap_byte=3072+(rootzone-8+1)//8;mask=1<<((rootzone-8+1)%8)
+        self.assertTrue(original[bitmap_byte]&mask)
+        for corruption in ['single','double','nested']:
+            for command in ['rm /etc/victim','echo cut>/etc/victim']:
+                with self.subTest(corruption=corruption,command=command),tempfile.TemporaryDirectory() as temp:
+                    data=bytearray(original)
+                    if corruption=='single':struct.pack_into('>H',data,inode+14+7*2,1)
+                    elif corruption=='double':struct.pack_into('>H',data,inode+14+8*2,1)
+                    else:
+                        indirect=struct.unpack_from('>H',data,inode+14+7*2)[0]
+                        data[indirect*1024:(indirect+1)*1024]=b'\0'*1024
+                        struct.pack_into('>H',data,indirect*1024,1)
+                        struct.pack_into('>HH',data,inode+14+7*2,0,indirect)
+                    disk=pathlib.Path(temp)/'bad.bin';disk.write_bytes(data)
+                    saved=pathlib.Path(temp)/'saved.bin';keys=pathlib.Path(temp)/'keys.txt'
+                    keys.write_bytes((command+'\nsync\ncat /etc/finish\n').encode('ascii'))
+                    r=subprocess.run([str(ROOT/'emu/emu.exe'),'build/kernel.bin','--disk',str(disk),'--input',str(keys),'--until','CORRUPTION CHECK DONE','--write-disk',str(saved)],cwd=ROOT,capture_output=True,timeout=15)
+                    self.assertEqual(r.returncode,0,r.stderr.decode(errors='replace'))
+                    self.assertTrue(saved.read_bytes()[bitmap_byte]&mask,'corrupt indirect pointer freed the live root directory zone')
     def test_ls_options_operands_and_hidden_entries(self):
         spec=importlib.util.spec_from_file_location('mkrootfs',ROOT/'scripts/mkrootfs.py')
         mod=importlib.util.module_from_spec(spec);spec.loader.exec_module(mod)

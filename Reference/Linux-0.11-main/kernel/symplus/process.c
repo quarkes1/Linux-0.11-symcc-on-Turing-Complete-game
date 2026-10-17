@@ -13,6 +13,9 @@ extern int sys_lseek(unsigned,int,int);
 extern int sys_dup(unsigned);
 extern int sys_dup2(unsigned,unsigned);
 extern int sys_chdir(const char *);
+extern int sys_mkdir(const char *,int);
+extern int sys_unlink(const char *);
+extern int sys_rmdir(const char *);
 extern int sys_stat(const char *,void *);
 extern int sys_fstat(unsigned,void *);
 extern int sys_sync(void);
@@ -54,14 +57,24 @@ static void activate(int slot) {
 }
 static void poll_io(void) {
     unsigned event=sp_keyboard_event(), key=event&255, low,high;
-    char c;
-    if(key==16)shift=(event&256)!=0;
+    char c;int i;
+    char *plain="`1234567890-=[]\\;',./";
+    char *shifted="~!@#$%^&*()_+{}|:\"<>?";
+    /* SYMPLUS-PORT: left/right Shift have separate release state. */
+    if(key==16 || key==20) {
+        i=key==16?1:2;
+        if(event&256)shift|=i;else shift&=~i;
+    }
     else if(event&256) {
         c=key;
         /* SYMPLUS-PORT: game Backspace is 0x0d; Enter is 0x0a.
          * Do not apply terminal CR-to-LF conversion to hardware events. */
         if(key==13)c=8;
         else if(key>=65 && key<=90)c=shift?key:key+32;
+        else if(key>=97 && key<=122)c=shift?key-32:key;
+        else if(shift) {
+            for(i=0;plain[i];i++)if(key==plain[i]){c=shifted[i];break;}
+        }
         if(c==8 || c==127) {
             if(head>tail && input[(head-1)&1023]!=10) {
                 head--;tty_write(0,"\b \b",3);
@@ -153,6 +166,7 @@ static int perform(unsigned nr,unsigned a,unsigned b,unsigned c,SpContext *ctx) 
         return sys_write(a,(char *)b,c);
     case 5:if(!user_string((char *)a))return -EFAULT;return sys_open((char *)a,b,c);
     case 6:return sys_close(a);
+    case 10:if(!user_string((char *)a))return -EFAULT;return sys_unlink((char *)a);
     case 7:
         if(b && !sp_user_range(b,4))return -EFAULT;
         return wait_current(a,(unsigned *)b,c);
@@ -167,6 +181,8 @@ static int perform(unsigned nr,unsigned a,unsigned b,unsigned c,SpContext *ctx) 
     case 20:return current->pid;
     case 28:if(!sp_user_range(b,sizeof(struct stat)))return -EFAULT;return sys_fstat(a,(void *)b);
     case 36:return sys_sync();
+    case 39:if(!user_string((char *)a))return -EFAULT;return sys_mkdir((char *)a,b);
+    case 40:if(!user_string((char *)a))return -EFAULT;return sys_rmdir((char *)a);
     case 41:return sys_dup(a);
     case 63:return sys_dup2(a,b);
     case 64:return current->father;

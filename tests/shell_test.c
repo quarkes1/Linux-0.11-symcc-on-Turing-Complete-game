@@ -3,11 +3,12 @@
 #include <string.h>
 #include "emu/emu.h"
 static const char *script="ls /bin\ncat /etc/motd\necho hello\nforktest\nnosuchcommand\necho abx\bC\ncd /etc\ncat motd\nexit\necho finished\n";
-static int input_at,can_type,shift_event,release_event;
+static int input_at,can_type,shift_event,release_event,shift_code=16;
 static unsigned char queued;
 static int fork_seen,error_seen,upper_seen,proc_seen,orphan_seen,exec_seen,reg_seen,mode;
 static int boot_seen,welcome_seen,clean_seen,cwd_seen,pwd_seen,long_seen,dots_seen,badflag_seen;
 static int nested_seen;
+static int file_seen;
 static int row_is(const char *screen,const char *want);
 static int last_row_is(const char *screen,const char *want) {
     for(int row=39;row>=0;row--) {
@@ -23,13 +24,19 @@ static char prior[3840];static uint64_t stable_since;static int stress_lines[100
 static uint32_t keyboard(void *p) {
     unsigned char c;(void)p;
     if(shift_event==1){shift_event=2;return 0x100u|queued;}
-    if(shift_event==2){shift_event=0;return 16;}
+    if(shift_event==2){shift_event=0;return shift_code;}
     if(release_event){release_event=0;return 13;}
     if(!can_type || !script[input_at])return 0;
     c=script[input_at++];if(c=='\n')can_type=0;
     /* Actual installed-game map: Backspace=0x0d, Enter=0x0a. */
     if(mode==5 && c=='\b'){release_event=1;return 0x10d;}
-    if(c>='A' && c<='Z'){queued=c;shift_event=1;return 0x110;}
+    if(mode==6 || mode==7) {
+        const char *shifted="~!@#$%^&*()_+{}|:\"<>?";
+        const char *base="`1234567890-=[]\\;',./";
+        const char *at=strchr(shifted,c);
+        if(at){queued=(unsigned char)base[at-shifted];shift_code=(input_at&1)?16:20;shift_event=1;return 0x100u|shift_code;}
+    }
+    if(c>='A' && c<='Z'){queued=c;shift_code=16;shift_event=1;return 0x110;}
     return 0x100u|c;
 }
 static int row_is(const char *screen,const char *want) {
@@ -64,6 +71,8 @@ static int seen(const EmuResult *r,uint64_t n,void *p) {
            !row_is(screen,"SymphonyPlus Linux: interactive boot"))clean_seen=1;
         can_type=1;
     }
+    if(mode==7 && stable && last_row_is(screen,">"))can_type=1;
+    file_seen|=row_is(screen,"int main(void) { return 2 < 3; }");
     cwd_seen|=row_is(screen,"symplus:/etc$");pwd_seen|=row_is(screen,"/etc");
     long_seen|=row_is(screen,"-rw-r--r-- 1 0 0 31 motd");
     dots_seen|=row_is(screen,"drwxr-xr-x 2 0 0 48 .");
@@ -80,6 +89,8 @@ static int seen(const EmuResult *r,uint64_t n,void *p) {
     if(mode==3)return row_is(screen,"line too long") && row_is(screen,"aftertty") && stable && prompt(screen);
     if(mode==4)return stable && row_is(screen,"uidone") && prompt(screen);
     if(mode==5)return stable && row_is(screen,"keydone") && prompt(screen);
+    if(mode==6)return stable && row_is(screen,"symdone") && prompt(screen);
+    if(mode==7)return stable && row_is(screen,"filedone") && prompt(screen);
     return fork_seen && error_seen && upper_seen && stable && row_is(screen,"finished") && prompt(screen);
 }
 static unsigned char *readfile(const char *s,size_t *len) {
@@ -102,6 +113,10 @@ int main(int argc,char **argv) {
         mode=4;script="ls -la /etc\nls -z\ncd /etc\nsh\npwd\nexit\npwd\ncd ../etc/./\ncd /missing\npwd\necho uidone\n";
     } else if(argc>1 && !strcmp(argv[1],"--keys")) {
         mode=5;script="\becho keyx\bOK\necho keydone\n";
+    } else if(argc>1 && !strcmp(argv[1],"--symbols")) {
+        mode=6;script="echo '~!@#$%^&*()_+{}|:\"<>?'\necho symdone\n";
+    } else if(argc>1 && !strcmp(argv[1],"--files")) {
+        mode=7;script="mkdir /tmp/demo\ncat >/tmp/demo/note <<EOF\nint main(void) { return 2 < 3; }\nEOF\ncat /tmp/demo/note\ncat /tmp/copy <<END\nsecond\nEND\nrm /tmp/copy\nrm -r /tmp/demo\necho filedone\n";
     }
     size_t bn,dn;unsigned char *bin=readfile("build/kernel.bin",&bn),*disk=readfile("build/rootfs.bin",&dn);
     EmuOptions opt={0};EmuResult r;
@@ -120,5 +135,7 @@ int main(int argc,char **argv) {
         fprintf(stderr,"edited=%d premature=%d\n",row_is((char *)r.mem+0x2000,"keyOK"),row_is((char *)r.mem+0x2000,"keyx"));
         ok=ok && row_is((char *)r.mem+0x2000,"keyOK") && !row_is((char *)r.mem+0x2000,"keyx");
     }
+    if(mode==6)ok=ok && row_is((char *)r.mem+0x2000,"~!@#$%^&*()_+{}|:\"<>?");
+    if(mode==7)ok=ok && file_seen;
     free(bin);free(disk);free(r.mem);free(r.disk);return ok?0:1;
 }

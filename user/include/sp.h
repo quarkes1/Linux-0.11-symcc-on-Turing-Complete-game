@@ -16,6 +16,16 @@ int dup(int);
 int dup2(int,int);
 int lseek(int,int,int);
 int chdir(char *);
+int mkdir(char *,int);
+int unlink(char *);
+int rmdir(char *);
+#define O_RDONLY 0
+#define O_WRONLY 1
+#define O_RDWR 2
+#define O_CREAT 00100
+#define O_EXCL 00200
+#define O_TRUNC 01000
+#define O_APPEND 02000
 int sync(void);
 int ps(void);
 int yield(void);

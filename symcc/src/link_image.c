@@ -114,7 +114,8 @@ static void line(Image *im,const char *s,int owner,const LinkOptions *opt) {
         target(im,resolve(im,arg,owner));emit(im,"    jmp r13\n");return;
     }
     /* Data relocations and immediate references; labels themselves never reach asm. */
-    if(*s==';' || *s=='"' || !*s) {emit(im,"%s\n",s);return;}
+    const char *data=s;while(*data==' ' || *data=='\t')data++;
+    if(*data==';' || *data=='"' || !*data) {emit(im,"%s\n",s);return;}
     char out[4096];size_t at=0;
     while(*s && at+64<sizeof out) {
         if(*s==';'){break;}

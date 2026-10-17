@@ -15,6 +15,9 @@ int dup(int f){return result(sp_call(41,f,0,0));}
 int dup2(int f,int to){return result(sp_call(63,f,to,0));}
 int lseek(int f,int n,int o){return result(sp_call(19,f,n,o));}
 int chdir(char *p){return result(sp_call(12,(int)p,0,0));}
+int mkdir(char *p,int m){return result(sp_call(39,(int)p,m,0));}
+int unlink(char *p){return result(sp_call(10,(int)p,0,0));}
+int rmdir(char *p){return result(sp_call(40,(int)p,0,0));}
 int sync(void){return result(sp_call(36,0,0,0));}
 int ps(void){return result(sp_call(100,0,0,0));}
 int yield(void){return result(sp_call(101,0,0,0));}
