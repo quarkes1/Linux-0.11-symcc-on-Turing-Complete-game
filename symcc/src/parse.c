@@ -247,6 +247,10 @@ static void register_case(Node *n, Token *t) {
             if (c->kind == ND_DEFAULT)
                 error_at(t, "duplicate default");
     }
+    /* The statement chain and case index need independent next pointers. */
+    Node *entry = (Node *)calloc(1,sizeof(Node));
+    if(!entry)exit(1);
+    *entry=*n;entry->next=NULL;n=entry;
     Node *head = case_stack[case_depth - 1];
     if (head) {
         Node *cur = head;
@@ -1028,7 +1032,11 @@ static void struct_members(Type *ty) {
                     off += 4;              /* 越过位域单元 */
                     in_bf = false;
                 }
-                off = (off + 3) & ~3;      /* 4 对齐（char 成员也 4 对齐——简化） */
+                /* Natural scalar alignment is required by MINIX disk records. */
+                Type *element = mty;
+                while (element->kind == TY_ARRAY) element = element->base;
+                int align = element->kind == TY_CHAR ? 1 : element->kind == TY_SHORT ? 2 : 4;
+                off = (off + align - 1) & ~(align - 1);
                 m->offset = off;
                 off += mty->size;
             }

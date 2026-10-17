@@ -1,0 +1,67 @@
+.text
+sp_call:
+    add r9, sp, 4
+    load_32 r1, [r9]
+    add r9, sp, 8
+    load_32 r2, [r9]
+    add r9, sp, 12
+    load_32 r3, [r9]
+    add r9, sp, 16
+    load_32 r4, [r9]
+    jmp 0x104
+.sym sp_call T text 0 0
+.text
+sp_reg_probe:
+    push r10
+    push r11
+    push r12
+    mov r2, 202
+    mov r3, 303
+    mov r4, 404
+    mov r5, 505
+    mov r6, 606
+    mov r7, 707
+    mov r8, 808
+    mov r9, 909
+    mov r10, 1010
+    mov r11, 1111
+    mov r12, 1212
+    mov r1,20
+    counter flags
+    add flags,flags,32
+    push flags
+    jmp 0x104
+    cmp r1,0
+    jle reg_probe_fail
+    cmp r2,202
+    jne reg_probe_fail
+    cmp r3,303
+    jne reg_probe_fail
+    cmp r4,404
+    jne reg_probe_fail
+    cmp r5,505
+    jne reg_probe_fail
+    cmp r6,606
+    jne reg_probe_fail
+    cmp r7,707
+    jne reg_probe_fail
+    cmp r8,808
+    jne reg_probe_fail
+    cmp r9,909
+    jne reg_probe_fail
+    cmp r10,1010
+    jne reg_probe_fail
+    cmp r11,1111
+    jne reg_probe_fail
+    cmp r12,1212
+    jne reg_probe_fail
+    mov r1,0
+    jmp reg_probe_done
+reg_probe_fail:
+    mov r1,1
+reg_probe_done:
+    pop r12
+    pop r11
+    pop r10
+    ret
+.sym sp_reg_probe T text 0 0

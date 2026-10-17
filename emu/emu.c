@@ -38,7 +38,7 @@ static void set_reg(uint32_t *regs, int i, uint32_t v) {
     if (i > 0) regs[i] = v;
 }
 
-EmuResult emu_run(const uint8_t *bin, size_t bin_len, size_t ram_size, uint64_t max_instr) {
+EmuResult emu_run_ex(const uint8_t *bin, size_t bin_len, size_t ram_size, uint64_t max_instr, const EmuOptions *opt) {
     EmuResult r;
     uint32_t regs[16] = {0};
     uint32_t settings[8] = {0};
@@ -46,6 +46,8 @@ EmuResult emu_run(const uint8_t *bin, size_t bin_len, size_t ram_size, uint64_t 
     uint64_t pc = 0;
     uint64_t n = 0;
     int error = 0;
+    size_t key_index = 0;
+    uint32_t time_high = 0;
 
     memset(&r, 0, sizeof r);
     if (ram_size < 1) ram_size = 1;
@@ -62,10 +64,20 @@ EmuResult emu_run(const uint8_t *bin, size_t bin_len, size_t ram_size, uint64_t 
         goto done;
     }
     memcpy(r.mem, bin, bin_len);
+    if (opt && opt->disk_len) {
+        if (!opt->disk || opt->disk_len > DISK_SIZE) { error = 2; goto done; }
+        memcpy(r.disk, opt->disk, opt->disk_len);
+    }
 
     while (n++ < max_instr) {
         uint32_t w;
         int b0, a, b, c;
+        r.instructions = n - 1;
+        if (opt && opt->observe && ((n - 1) % 1024 == 0)) {
+            memcpy(r.regs, regs, sizeof regs);
+            memcpy(r.settings, settings, sizeof settings);
+            if (opt->observe(&r, n - 1, opt->opaque)) { r.stop_reason = 1; goto done; }
+        }
 
         if (pc + 4 > ram_size) { error = 2; break; }
         w = rd32(r.mem + pc);
@@ -79,13 +91,29 @@ EmuResult emu_run(const uint8_t *bin, size_t bin_len, size_t ram_size, uint64_t 
         case 0x00: break;                   /* nop */
         case 0x01: set_reg(regs, a, 0); break;                  /* in */
         case 0x02: printf("OUT %u\n", regs[(w >> 8) & 0xF]); break; /* out reg */
-        case 0x03: set_reg(regs, a, 0); break;                  /* keyboard（空 FIFO） */
-        case 0x04: settings[(w >> 16) & 0xF] = regs[(w >> 8) & 0xF]; break;
-        case 0x05: set_reg(regs, a, 0); break;                  /* time_0 */
-        case 0x06: set_reg(regs, a, 0); break;                  /* time_1 */
+        case 0x03: {
+            uint32_t key = 0;
+            if (opt && key_index < opt->n_events &&
+                opt->events[key_index].at_instruction <= n - 1)
+                key = opt->events[key_index++].key;
+            else if (opt && !opt->n_events && opt->keyboard)
+                key = opt->keyboard(opt->opaque);
+            set_reg(regs, a, key); break;
+        }
+        case 0x04:
+            if (regs[(w >> 16) & 0xF] >= 8) { error = 2; goto done; }
+            settings[regs[(w >> 16) & 0xF]] = regs[(w >> 8) & 0xF]; break;
+        case 0x05: {
+            uint64_t ns = opt ? (n - 1) * opt->ns_per_instruction : 0;
+            time_high = (uint32_t)(ns >> 32);
+            set_reg(regs, a, (uint32_t)ns); break;
+        }
+        case 0x06: set_reg(regs, a, time_high); break;
         case 0x07: set_reg(regs, a, (uint32_t)pc); break;       /* counter=自身地址 */
         case 0x10: printf("OUT %u\n", w & 0xFFFF); break;       /* out imm */
-        case 0x14: settings[(w >> 16) & 0xF] = w & 0xFFFF; break;
+        case 0x14:
+            if (regs[(w >> 16) & 0xF] >= 8) { error = 2; goto done; }
+            settings[regs[(w >> 16) & 0xF]] = w & 0xFFFF; break;
 
         /* ---------- ALU reg（mov/neg/not 别名并入母指令） ---------- */
         case 0x20: set_reg(regs, a, ~(regs[b] & regs[c])); break;    /* nand */
@@ -180,7 +208,12 @@ halt:
     r.exit_code = (int)regs[1];
 done:
     r.error = error;
+    if (error) r.stop_reason = error == 1 ? 2 : 3;
     memcpy(r.regs, regs, sizeof regs);
     memcpy(r.settings, settings, sizeof settings);
     return r;
+}
+
+EmuResult emu_run(const uint8_t *bin, size_t len, size_t ram, uint64_t limit) {
+    return emu_run_ex(bin, len, ram, limit, NULL);
 }

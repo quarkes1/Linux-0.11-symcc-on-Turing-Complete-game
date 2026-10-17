@@ -10,8 +10,8 @@ typedef char *va_list;
   (((sizeof (TYPE) + sizeof (int) - 1) / sizeof (int)) * sizeof (int))
 
 #ifndef __sparc__
-#define va_start(AP, LASTARG) 						\
- (AP = ((char *) &(LASTARG) + __va_rounded_size (LASTARG)))
+/* SYMPLUS-PORT: named arguments live in local copies; use the original caller stack. */
+#define va_start(AP, LASTARG) __builtin_va_start(AP, LASTARG)
 #else
 #define va_start(AP, LASTARG) 						\
  (__builtin_saveregs (),						\

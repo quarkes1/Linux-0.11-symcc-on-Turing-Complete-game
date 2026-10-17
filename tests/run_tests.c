@@ -32,6 +32,7 @@ static void compile_and_run(const char *c_file, int expected_exit,
     /* 多文件：逐个编译成独立对象（被调函数先定义的文件在前），
      * 链接器统一布局（Task 6 起：不再拼接文本）。 */
     Obj *objs[8];
+    const char *inc_dirs[]={"Reference/Linux-0.11-main/include"};
     int nobj = 0;
     if (extra_file[0]) {
         char list[256];
@@ -50,7 +51,7 @@ static void compile_and_run(const char *c_file, int expected_exit,
             assert(nobj < 8);
             objs[nobj] = obj_new();
             assert(symcc_compile_obj(text, rest, objs[nobj], false,
-                                     NULL, 0, NULL, 0));
+                                     inc_dirs, 1, NULL, 0));
             nobj++;
             rest = comma ? comma + 1 : NULL;
         }
@@ -63,14 +64,16 @@ static void compile_and_run(const char *c_file, int expected_exit,
     assert(nobj < 8);
     objs[nobj] = obj_new();
     assert(symcc_compile_obj(text, c_file, objs[nobj], false,
-                             NULL, 0, NULL, 0));
+                             inc_dirs, 1, NULL, 0));
     nobj++;
 
     /* 链接 → 绝对 asm 文本 */
     FILE *afp = tmpfile();
     assert(afp != NULL);
     LinkError lerr;
-    assert(symld_link(objs, nobj, "runtime/crt0.asm", afp, NULL, &lerr));
+    int linked=symld_link(objs, nobj, "runtime/crt0.asm", afp, NULL, &lerr);
+    if(!linked)fprintf(stderr,"LINK ERROR %s: %s\n",c_file,lerr.msg);
+    assert(linked);
     for (int i = 0; i < nobj; i++)
         obj_free(objs[i]);
     rewind(afp);
@@ -81,6 +84,7 @@ static void compile_and_run(const char *c_file, int expected_exit,
     n = asm_assemble(text, bin, sizeof bin, &aerr);
     assert(n > 0);
     res = emu_run(bin, (size_t)n, 8 << 20, 100000000);
+    if(res.error)fprintf(stderr,"EMU ERROR %s: %d sp=%x fp=%x\n",c_file,res.error,res.regs[14],res.regs[10]);
     assert(res.error == 0);
     if (res.exit_code != expected_exit)
         fprintf(stderr, "MISMATCH %s: got %d want %d\n", c_file, res.exit_code, expected_exit);
@@ -93,6 +97,12 @@ static void compile_and_run(const char *c_file, int expected_exit,
 }
 
 int main(void) {
+    compile_and_run("tests/test_tick.c", 0, NULL, 0, "");
+    compile_and_run("tests/test_kernel_format.c", 0, NULL, 0, "runtime/divsi3.c");
+    compile_and_run("tests/test_kernel_varargs.c", 0, NULL, 0, "runtime/divsi3.c");
+    compile_and_run("tests/test_narrow_args.c", 0, NULL, 0, "");
+    compile_and_run("tests/test_logical.c", 0, NULL, 0, "");
+    compile_and_run("tests/test_disk_layout.c", 0, NULL, 0, "");
     compile_and_run("tests/test_arith.c", 7, NULL, 0, "");
     compile_and_run("tests/test_locals.c", 13, NULL, 0, "");
     compile_and_run("tests/test_control.c", 100, NULL, 0, "");

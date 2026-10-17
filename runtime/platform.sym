@@ -1,0 +1,189 @@
+.text
+sp_syscall_entry:
+    push flags
+    push r1
+    push r2
+    push r3
+    push r4
+    push r5
+    push r6
+    push r7
+    push r8
+    push r9
+    push r10
+    push r11
+    push r12
+    push r13
+    mov r1, sp
+    mov r2, 40
+    lsl r2, r2, 16
+    or r2, r2, 0
+    add r3, r1, 48
+    load_32 r4, [r3]
+    add r3, r2, 4
+    store_32 [r3], r4
+    add r3, r1, 44
+    load_32 r4, [r3]
+    add r3, r2, 8
+    store_32 [r3], r4
+    add r3, r1, 40
+    load_32 r4, [r3]
+    add r3, r2, 12
+    store_32 [r3], r4
+    add r3, r1, 36
+    load_32 r4, [r3]
+    add r3, r2, 16
+    store_32 [r3], r4
+    add r3, r1, 32
+    load_32 r4, [r3]
+    add r3, r2, 20
+    store_32 [r3], r4
+    add r3, r1, 28
+    load_32 r4, [r3]
+    add r3, r2, 24
+    store_32 [r3], r4
+    add r3, r1, 24
+    load_32 r4, [r3]
+    add r3, r2, 28
+    store_32 [r3], r4
+    add r3, r1, 20
+    load_32 r4, [r3]
+    add r3, r2, 32
+    store_32 [r3], r4
+    add r3, r1, 16
+    load_32 r4, [r3]
+    add r3, r2, 36
+    store_32 [r3], r4
+    add r3, r1, 12
+    load_32 r4, [r3]
+    add r3, r2, 40
+    store_32 [r3], r4
+    add r3, r1, 8
+    load_32 r4, [r3]
+    add r3, r2, 44
+    store_32 [r3], r4
+    add r3, r1, 4
+    load_32 r4, [r3]
+    add r3, r2, 48
+    store_32 [r3], r4
+    add r3, r1, 0
+    load_32 r4, [r3]
+    add r3, r2, 52
+    store_32 [r3], r4
+    add r3, r1, 52
+    load_32 r4, [r3]
+    add r3, r2, 60
+    store_32 [r3], r4
+    add r4, r1, 60
+    add r3, r2, 56
+    store_32 [r3], r4
+    add r3, r1, 56
+    load_32 r4, [r3]
+    add r3, r2, 64
+    store_32 [r3], r4
+    mov sp, 48
+    lsl sp, sp, 16
+    or sp, sp, 0
+    push r2
+    call sp_dispatch
+    add sp, sp, 4
+    jmp sp_restore
+sp_resume:
+    add r1, sp, 4
+    load_32 r1, [r1]
+sp_restore:
+    mov flags, r1
+    add r13, flags, 56
+    load_32 sp, [r13]
+    add r13, flags, 64
+    load_32 r13, [r13]
+    push r13
+    add r13, flags, 4
+    load_32 r1, [r13]
+    add r13, flags, 8
+    load_32 r2, [r13]
+    add r13, flags, 12
+    load_32 r3, [r13]
+    add r13, flags, 16
+    load_32 r4, [r13]
+    add r13, flags, 20
+    load_32 r5, [r13]
+    add r13, flags, 24
+    load_32 r6, [r13]
+    add r13, flags, 28
+    load_32 r7, [r13]
+    add r13, flags, 32
+    load_32 r8, [r13]
+    add r13, flags, 36
+    load_32 r9, [r13]
+    add r13, flags, 40
+    load_32 r10, [r13]
+    add r13, flags, 44
+    load_32 r11, [r13]
+    add r13, flags, 48
+    load_32 r12, [r13]
+    add r13, flags, 52
+    load_32 r13, [r13]
+    ret
+sp_keyboard_event:
+    keyboard r1
+    ret
+sp_time_low:
+    time_0 r1
+    ret
+sp_time_high:
+    time_1 r1
+    ret
+sp_disk_read32:
+    add r9, sp, 4
+    load_32 r2, [r9]
+    pload r1, [r2]
+    ret
+sp_disk_write32:
+    add r9, sp, 4
+    load_32 r2, [r9]
+    add r9, sp, 8
+    load_32 r1, [r9]
+    pstore [r2], r1
+    ret
+sp_copy:
+    add r9, sp, 4
+    load_32 r1, [r9]
+    add r9, sp, 8
+    load_32 r2, [r9]
+    add r9, sp, 12
+    load_32 r3, [r9]
+sp_copy_loop:
+    cmp r3, 0
+    je sp_copy_done
+    load_32 r4, [r2]
+    store_32 [r1], r4
+    add r1, r1, 4
+    add r2, r2, 4
+    sub r3, r3, 4
+    jmp sp_copy_loop
+sp_copy_done:
+    ret
+sp_zero:
+    add r9, sp, 4
+    load_32 r1, [r9]
+    add r9, sp, 8
+    load_32 r2, [r9]
+sp_zero_loop:
+    cmp r2, 0
+    je sp_zero_done
+    store_32 [r1], zr
+    add r1, r1, 4
+    sub r2, r2, 4
+    jmp sp_zero_loop
+sp_zero_done:
+    ret
+.sym sp_syscall_entry T text 0 0
+.sym sp_resume T text 0 0
+.sym sp_keyboard_event T text 0 0
+.sym sp_time_low T text 0 0
+.sym sp_time_high T text 0 0
+.sym sp_disk_read32 T text 0 0
+.sym sp_disk_write32 T text 0 0
+.sym sp_copy T text 0 0
+.sym sp_zero T text 0 0

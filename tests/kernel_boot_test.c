@@ -38,7 +38,7 @@ static const char EXPECTED[] =
 #define N_ROWS  12	/* 11 日志行（含空行）+ Boot 行 */
 
 int main(void) {
-	const char *path = "build/kernel.bin";
+	const char *path = "build/m3/kernel.bin";
 	FILE *fp = fopen(path, "rb");
 	EmuResult res;
 	static uint8_t bin[1 << 21];	/* kernel.bin ~570KB；大缓冲放 static（Windows 栈 1MB） */

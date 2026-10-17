@@ -349,6 +349,10 @@ struct buffer_head * breada(int dev,int first, ...)
 
 void buffer_init(long buffer_end)
 {
+#ifdef SP_INTERACTIVE
+    /* SYMPLUS-PORT: dedicated resident cache, above kernel image and boot stack. */
+    start_buffer = (struct buffer_head *)0x100000;
+#endif
 	struct buffer_head * h = start_buffer;
 	void * b;
 	int i;

@@ -287,6 +287,7 @@ static void gen_logand(Node *n) {
     emit("    cmp r1, r2\n");
     emit("    je %s        ; && 短路\n", Lfalse);
     gen_expr(n->rhs);
+    emit("    mov r2, 0          ; rhs may clobber r2\n");
     emit("    cmp r1, r2\n");
     emit("    je %s\n", Lfalse);
     emit("    mov r1, 1\n");
@@ -304,6 +305,7 @@ static void gen_logor(Node *n) {
     emit("    cmp r1, r2\n");
     emit("    jne %s        ; || 短路\n", Ltrue);
     gen_expr(n->rhs);
+    emit("    mov r2, 0          ; rhs may clobber r2\n");
     emit("    cmp r1, r2\n");
     emit("    jne %s\n", Ltrue);
     emit("    mov r1, 0\n");
@@ -812,7 +814,7 @@ static void gen_func(Func *f) {
             emit("    add r9, r10, %d        ; arg %d addr\n", arg_off, k);
             emit("    load_32 r1, [r9]\n");
             emit("    sub r9, r10, %d        ; arg %d slot\n", slot_off, k);
-            emit("    store_32 [r9], r1\n");
+            gen_store(f->param_tys[k]);
         }
         arg_off += (int)psz;
     }

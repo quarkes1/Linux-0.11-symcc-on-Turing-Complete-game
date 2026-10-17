@@ -567,6 +567,8 @@ bool symld_link(Obj **objs_in, int n_in, const char *crt0_path,
         crt0_size += line_size_after(&c, 0, i);
     c.halt_base = crt0_size + 4;                    /* 后随 jmp halt（4B） */
     c.pool_base = align4(c.halt_base + 4);          /* halt: 指令 4B */
+    /* The framebuffer is live RAM: reserve it before placing any pool/code/data. */
+    if(c.pool_base<0x3000)c.pool_base=0x3000;
     c.tramp_base = align4(c.pool_base + 4L * (c.n_tramp + c.n_slots));
     long low_end = c.tramp_base + 8L * c.n_tramp;   /* 跳板区结束 = bss 起点 */
     c.bss_base = align4(low_end);
@@ -795,6 +797,8 @@ bool symld_link(Obj **objs_in, int n_in, const char *crt0_path,
         emit_line(&c, 0, 0, c.objs[0]->text_lines[i], &buf);
     buf_printf(&buf, "    jmp halt\n");
     buf_printf(&buf, "halt:\n    jmp halt\n");
+    for(long off=c.halt_base+4;off<c.pool_base;off+=4)
+        buf_printf(&buf,"    U32 0\n");
     buf_printf(&buf, "; jump target pool (%d entries)\n", c.n_pool);
     for (Tramp *t = c.tramps; t; t = t->next)
         buf_printf(&buf, "    U32 0x%08lx\n", t->target);

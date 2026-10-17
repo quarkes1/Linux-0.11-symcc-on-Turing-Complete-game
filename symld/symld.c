@@ -19,11 +19,18 @@ static void usage(void) {
 
 int main(int argc, char **argv) {
     const char *out_asm = NULL, *out_bin = NULL, *crt0 = "runtime/crt0.asm";
+    LinkOptions options={0,0xe0000,0x100,0x104,SP_IMAGE_LEGACY};
     Obj *objs[128];
     int n = 0;
 
     for (int i = 1; i < argc; i++) {
-        if (strcmp(argv[i], "-o") == 0 && i + 1 < argc) {
+        if (strcmp(argv[i], "--image") == 0 && i + 1 < argc) {
+            const char *kind=argv[++i];
+            if(!strcmp(kind,"kernel"))options.image_kind=SP_IMAGE_KERNEL;
+            else if(!strcmp(kind,"user")) {
+                options.image_kind=SP_IMAGE_USER;options.base=0x200000;options.limit=0x270000;
+            } else {usage();return 2;}
+        } else if (strcmp(argv[i], "-o") == 0 && i + 1 < argc) {
             out_asm = argv[++i];
         } else if (strcmp(argv[i], "--bin") == 0 && i + 1 < argc) {
             out_bin = argv[++i];
@@ -75,7 +82,7 @@ int main(int argc, char **argv) {
     }
 
     LinkError err;
-    if (!symld_link(objs, n, crt0, of, bf, &err)) {
+    if (!symld_link_ex(objs, n, crt0, &options, of, bf, &err)) {
         fprintf(stderr, "symld: %s\n", err.msg);
         fclose(of);
         if (bf)

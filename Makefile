@@ -7,8 +7,9 @@ CFLAGS := -O0 -g -Wall -Wextra -I.
 
 EMU_SRC := emu/isa.c emu/asm.c emu/emu.c
 EMU_HDR := emu/isa.h emu/asm.h emu/emu.h
-SYMCC_SRC := symcc/src/main.c symcc/src/tokenize.c symcc/src/parse.c symcc/src/codegen.c symcc/src/compile.c symcc/src/preprocess.c symcc/src/obj.c symcc/src/link.c
-SYMCC_LIB := symcc/src/tokenize.c symcc/src/parse.c symcc/src/codegen.c symcc/src/compile.c symcc/src/preprocess.c symcc/src/obj.c symcc/src/link.c
+PLATFORM_HDR := runtime/platform.h symcc/include/config.h symcc/src/obj.h symcc/src/link.h symcc/src/symcc.h
+SYMCC_SRC := symcc/src/main.c symcc/src/tokenize.c symcc/src/parse.c symcc/src/codegen.c symcc/src/compile.c symcc/src/preprocess.c symcc/src/obj.c symcc/src/link.c symcc/src/link_image.c
+SYMCC_LIB := symcc/src/tokenize.c symcc/src/parse.c symcc/src/codegen.c symcc/src/compile.c symcc/src/preprocess.c symcc/src/obj.c symcc/src/link.c symcc/src/link_image.c
 
 all: emu/asm.exe emu/emu.exe tests/asm_test.exe tests/emu_test.exe symcc/symcc.exe symld/symld.exe tests/run_tests.exe tests/preproc_test.exe tests/link_test.exe tests/kernel_boot_test.exe
 
@@ -27,8 +28,8 @@ tests/link_test.exe: tests/link_test.c $(SYMCC_LIB) $(EMU_SRC) $(EMU_HDR) symcc/
 tests/kernel_boot_test.exe: tests/kernel_boot_test.c $(EMU_SRC) $(EMU_HDR)
 	$(CC) $(CFLAGS) -o $@ tests/kernel_boot_test.c $(EMU_SRC)
 
-symld/symld.exe: symld/symld.c symcc/src/obj.c symcc/src/link.c symcc/src/obj.h symcc/src/link.h $(EMU_SRC) $(EMU_HDR)
-	$(CC) $(CFLAGS) -o $@ symld/symld.c symcc/src/obj.c symcc/src/link.c $(EMU_SRC)
+symld/symld.exe: symld/symld.c symcc/src/obj.c symcc/src/link.c symcc/src/link_image.c symcc/src/obj.h symcc/src/link.h $(EMU_SRC) $(EMU_HDR)
+	$(CC) $(CFLAGS) -o $@ symld/symld.c symcc/src/obj.c symcc/src/link.c symcc/src/link_image.c $(EMU_SRC)
 
 emu/asm.exe: emu/asm_main.c $(EMU_SRC) $(EMU_HDR)
 	$(CC) $(CFLAGS) -o $@ emu/asm_main.c $(EMU_SRC)
@@ -42,18 +43,51 @@ tests/asm_test.exe: tests/asm_test.c $(EMU_SRC) $(EMU_HDR)
 tests/emu_test.exe: tests/emu_test.c $(EMU_SRC) $(EMU_HDR)
 	$(CC) $(CFLAGS) -o $@ tests/emu_test.c $(EMU_SRC)
 
-test: all build/kernel.bin
+test: all m3-image system-image
 	tests/asm_test.exe
 	tests/emu_test.exe
 	tests/run_tests.exe
 	tests/preproc_test.exe
 	tests/link_test.exe
 	tests/kernel_boot_test.exe
+	tests/platform_test.exe
+	tests/emu_io_test.exe
+	tests/user_link_test.exe
+	tests/shell_test.exe
+	tests/shell_test.exe --process
+	tests/shell_test.exe --stress
+	tests/shell_test.exe --tty
+	tests/tick_test.exe
+	python -m unittest discover -s tests -p test_mkrootfs.py
+	python -m unittest discover -s tests -p test_emu_cli.py
 
-build/kernel.bin:
-	bash scripts/build_kernel.sh
+m3-image: all
+	bash scripts/build_kernel.sh --m3
+
+system-image: all
+	bash scripts/build_system.sh
 
 clean:
 	rm -f emu/*.exe tests/*.exe symcc/symcc.exe symld/symld.exe
 
-.PHONY: all test clean
+.PHONY: all test clean m3-image system-image
+
+symcc/symcc.exe symld/symld.exe tests/run_tests.exe tests/link_test.exe tests/user_link_test.exe: $(PLATFORM_HDR)
+
+all: tests/platform_test.exe tests/emu_io_test.exe tests/user_link_test.exe tests/shell_test.exe
+all: tests/tick_test.exe
+
+tests/tick_test.exe: tests/tick_test.c Reference/Linux-0.11-main/kernel/symplus/tick.c
+	$(CC) $(CFLAGS) -o $@ $^
+
+tests/platform_test.exe: tests/platform_test.c runtime/platform.h
+	$(CC) $(CFLAGS) -o $@ $<
+
+tests/emu_io_test.exe: tests/emu_io_test.c $(EMU_SRC) $(EMU_HDR)
+	$(CC) $(CFLAGS) -o $@ $< $(EMU_SRC)
+
+tests/user_link_test.exe: tests/user_link_test.c $(SYMCC_LIB) $(EMU_SRC) $(EMU_HDR)
+	$(CC) $(CFLAGS) -o $@ tests/user_link_test.c $(SYMCC_LIB) $(EMU_SRC)
+
+tests/shell_test.exe: tests/shell_test.c emu/emu.c emu/emu.h
+	$(CC) $(CFLAGS) -O2 -o $@ tests/shell_test.c emu/emu.c

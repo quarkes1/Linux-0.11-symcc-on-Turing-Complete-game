@@ -1,3 +1,69 @@
+# 当前交付：磁盘上的交互 shell
+
+已实现真实 `fork/exec/wait`、合作式进程切换、DiskA 块驱动、大端 MINIX 文件系统及独立用户程序。
+**模拟器端到端已验证；这一版交互系统的游戏内运行仍需实测。** 下文保留 M0–M3 的历史说明；当前默认构建以本节为准。
+
+在项目原目录构建（MSYS2 GCC、Git Bash、Python 3）：
+
+```powershell
+$env:PATH = 'D:\Downloads\msys64\ucrt64\bin;' + $env:PATH
+mingw32-make all
+bash scripts/build_system.sh
+mingw32-make test
+```
+
+模拟器交互运行，按 **Ctrl+D** 退出；客户机按键回显在帧缓冲中：
+
+```powershell
+.\emu\emu.exe build/kernel.bin --disk build/rootfs.bin --interactive
+```
+
+游戏加载：RAM 的外部文件设置为 `build/kernel.bin`，DiskA 的外部文件设置为 `build/rootfs.bin`；
+两者均为 **8MB、Big endian**。屏幕需连接主 RAM，键盘连接现有 keyboard 输入。
+启动后出现 `symplus$ `，点击游戏键盘输入区域使其获得焦点，再输入命令。
+不要向游戏粘贴大型汇编源码。磁盘镜像会由构建脚本重新生成，保存游戏中修改的数据时另存副本。
+
+```text
+help
+ls /bin
+cat /etc/motd
+echo hello
+cd /etc
+cat motd
+ps
+forktest
+proctest
+execprobe
+sync
+exit
+```
+
+`cd`、`exit` 是 shell 内建，其余列出的程序由磁盘加载；`exit` 后 PID 1 会重新启动 shell。
+`forktest` 检查内存隔离、共享文件偏移及退出状态；`proctest` 检查槽耗尽、64 次回收和孤儿收养；
+`execprobe` 检查损坏可执行文件、参数限制和指针边界。
+
+模拟器默认不覆盖输入磁盘。需要保存时显式指定 `--write-disk saved-rootfs.bin`，并先在客户机执行 `sync`。
+自动化可用 `--input keys.txt --until "屏幕文本"` 注入按键并在匹配后停止；`--until` 可能匹配回显文字，
+断言命令执行结果应选输出专用标记。
+
+当前限制：最多 8 个用户进程（含 init 和 shell）；每个进程有 512KB 用户窗口，工具链默认保留 64KB 栈空间。
+采用调用边界的合作式切换，无系统调用的死循环不会被抢占。无硬件内存保护。
+命令行支持空白分词、退格和大小写，不支持管道、重定向、引号和后台作业。
+帧缓冲固定在 `0x2000`，链接器已明确避让；用户程序位于 `0x200000`，通过固定低地址网关完成长分支和系统调用。
+游戏键码、真实运行速度和持久 RAM 保存行为应在游戏验收中确认。
+
+原 M3 停机验收单独构建，不覆盖交互镜像：
+
+```powershell
+bash scripts/build_kernel.sh --m3
+.\tests\kernel_boot_test.exe
+```
+
+新增实现设计与计划见 `docs/superpowers/specs/2026-10-17-fork-disk-shell-design.md` 和
+`docs/superpowers/plans/2026-10-17-fork-disk-shell.md`。
+
+---
+
 <p align="center">
   <b>SymphonyPlus</b><br>
   在《Turing Complete》游戏搭建 32 位 CPU，<br>

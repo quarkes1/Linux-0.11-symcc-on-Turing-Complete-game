@@ -1,48 +1,18 @@
 #!/bin/bash
-# scripts/build_kernel.sh — Linux 0.11 内核编译演练（M2 Task 8 验收）
-# 用法: bash scripts/build_kernel.sh [clean]
-# 流程: 50 个内核 .c → 50 个 .sym → symld 链接（crt0 + bss 清零 + jmp halt）→ kernel.asm
-# 断言: 链接成功（J16 64KB 限制由链接器自校验）+ 输出含 main:/halt:
-# SYMPLUS-PORT: tools/build.c 排除——宿主机打包工具（原版 Makefile 用宿主
-# gcc 编译），其职责由本脚本自身取代，非目标机内核代码。
-set -e
-export PATH="/d/Downloads/msys64/mingw64/bin:$PATH"
+set -eu
 cd "$(dirname "$0")/.."
-K=Reference/Linux-0.11-main
-OUT=build/kernel
-if [ "$1" = clean ]; then
-  rm -rf build
-  exit 0
+if [ "${1:-}" != --m3 ]; then
+    exec bash scripts/build_system.sh
 fi
-mkdir -p "$OUT"
-cd "$K"
-CC=../../symcc/symcc.exe
-LD=../../symld/symld.exe
-INC="-I include"
-DEFS="-D__GNUC__=2 -D__GNUC_MINOR__=7 -D__KERNEL__ -D__OPTIMIZE__"
-n=0
-# 编译每个 .c（init/kernel/mm/fs/lib 递归）
-while IFS= read -r f; do
-  base=$(echo "$f" | sed 's|^\./||' | tr '/' '_' | sed 's/\.c$/.sym/')
-  echo "== [$n] $f"
-  "$CC" $INC $DEFS -c "$f" -o "../../$OUT/$base"
-  n=$((n+1))
-done < <(find . -name '*.c' ! -path './tools/*' | sort)
-echo "== compiled $n objects"
-# 运行时库（有符号除/模——内核代码调用 __divsi3/__modsi3）
-"$CC" -I include -c ../../runtime/divsi3.c -o "../../$OUT/runtime_divsi3.sym"
-echo "== compiled runtime"
-# 链接全部对象（crt0 显式指定，避免 cwd 依赖）
-"$LD" --crt0 ../../runtime/crt0.asm -o ../../build/kernel.asm ../../build/kernel/*.sym
-echo "== linked: $(wc -l < ../../build/kernel.asm) asm lines"
-# 断言：入口与 halt 安全网存在
-if ! grep -q '^main:' ../../build/kernel.asm; then
-  echo "FAIL: no main: label in kernel.asm"; exit 1
-fi
-if ! grep -q '^halt:' ../../build/kernel.asm; then
-  echo "FAIL: no halt: label in kernel.asm"; exit 1
-fi
-# 汇编为游戏可直接加载的机器码（RAM"外部文件"模式原样装载、不做汇编）
-../../emu/asm.exe ../../build/kernel.asm ../../build/kernel.bin
-echo "== assembled kernel.bin: $(wc -c < ../../build/kernel.bin) bytes"
-echo "KERNEL BUILD OK"
+mkdir -p build/m3/objects
+objects=()
+while IFS= read -r source; do
+    name=${source#Reference/Linux-0.11-main/}
+    name=${name//\//_}
+    name=${name%.c}.sym
+    symcc/symcc.exe --d32 -I Reference/Linux-0.11-main/include -D__GNUC__=2 -D__GNUC_MINOR__=7 -D__KERNEL__ -D__OPTIMIZE__ -c "$source" -o "build/m3/objects/$name"
+    objects+=("build/m3/objects/$name")
+done < <(find Reference/Linux-0.11-main -name '*.c' ! -path '*/tools/*' ! -path '*/kernel/symplus/*' ! -name 'symdisk.c' ! -name 'symexec.c' ! -name 'minix_disk.c' | sort)
+symcc/symcc.exe --d32 -c runtime/divsi3.c -o build/m3/objects/divsi3.sym
+symld/symld.exe --image kernel --crt0 runtime/crt0_interactive.asm "${objects[@]}" build/m3/objects/divsi3.sym -o build/m3/kernel.asm --bin build/m3/kernel.bin
+echo 'M3 KERNEL BUILD OK'

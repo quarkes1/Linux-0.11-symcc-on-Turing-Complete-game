@@ -173,8 +173,8 @@ bool obj_read(Obj *o, FILE *in) {
         if (len == 0) break;   /* EOF */
         line[len] = 0;
         /* 去行尾换行 */
-        if (len > 0 && line[len - 1] == '\n')
-            line[len - 1] = 0;
+        while (len > 0 && (line[len - 1] == '\n' || line[len - 1] == '\r'))
+            line[--len] = 0;
         if (line[0] == ';' || line[0] == 0)
             continue;
         if (strcmp(line, ".text") == 0) { section = 1; continue; }

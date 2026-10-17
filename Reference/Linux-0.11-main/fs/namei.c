@@ -124,7 +124,8 @@ static struct buffer_head * find_entry(struct m_inode ** dir,
 			}
 		}
 	}
-	if (!(block = (*dir)->i_zone[0]))
+    /* SYMPLUS-PORT: directory blocks need the same zone validation as files. */
+	if ((block = bmap(*dir,0))<=0)
 		return NULL;
 	if (!(bh = bread((*dir)->i_dev,block)))
 		return NULL;
@@ -134,10 +135,9 @@ static struct buffer_head * find_entry(struct m_inode ** dir,
 		if ((char *)de >= BLOCK_SIZE+bh->b_data) {
 			brelse(bh);
 			bh = NULL;
-			if (!(block = bmap(*dir,i/DIR_ENTRIES_PER_BLOCK)) ||
+			if ((block = bmap(*dir,i/DIR_ENTRIES_PER_BLOCK))<=0 ||
 			    !(bh = bread((*dir)->i_dev,block))) {
-				i += DIR_ENTRIES_PER_BLOCK;
-				continue;
+                return NULL;
 			}
 			de = (struct dir_entry *) bh->b_data;
 		}
@@ -179,7 +179,7 @@ static struct buffer_head * add_entry(struct m_inode * dir,
 #endif
 	if (!namelen)
 		return NULL;
-	if (!(block = dir->i_zone[0]))
+	if ((block = bmap(dir,0))<=0)
 		return NULL;
 	if (!(bh = bread(dir->i_dev,block)))
 		return NULL;
@@ -190,11 +190,10 @@ static struct buffer_head * add_entry(struct m_inode * dir,
 			brelse(bh);
 			bh = NULL;
 			block = create_block(dir,i/DIR_ENTRIES_PER_BLOCK);
-			if (!block)
+			if (block<=0)
 				return NULL;
 			if (!(bh = bread(dir->i_dev,block))) {
-				i += DIR_ENTRIES_PER_BLOCK;
-				continue;
+                return NULL;
 			}
 			de = (struct dir_entry *) bh->b_data;
 		}
@@ -548,8 +547,8 @@ static int empty_dir(struct m_inode * inode)
 	struct dir_entry * de;
 
 	len = inode->i_size / sizeof (struct dir_entry);
-	if (len<2 || !inode->i_zone[0] ||
-	    !(bh=bread(inode->i_dev,inode->i_zone[0]))) {
+	if (len<2 || (block=bmap(inode,0))<=0 ||
+	    !(bh=bread(inode->i_dev,block))) {
 	    	printk("warning - bad directory on dev %04x\n",inode->i_dev);
 		return 0;
 	}
@@ -565,9 +564,8 @@ static int empty_dir(struct m_inode * inode)
 		if ((void *) de >= (void *) (bh->b_data+BLOCK_SIZE)) {
 			brelse(bh);
 			block=bmap(inode,nr/DIR_ENTRIES_PER_BLOCK);
-			if (!block) {
-				nr += DIR_ENTRIES_PER_BLOCK;
-				continue;
+			if (block<=0) {
+                return 0;
 			}
 			if (!(bh=bread(inode->i_dev,block)))
 				return 0;
