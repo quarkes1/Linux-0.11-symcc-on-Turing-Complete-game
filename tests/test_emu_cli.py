@@ -32,16 +32,22 @@ class CliTest(unittest.TestCase):
         mod,disk,screen=self.file_session('sh && echo bad>/tmp/skip || echo seven>/tmp/seven\nexit 7\n')
         self.assertEqual(mod.read_file(disk,'/tmp/seven'),b'seven\n')
         with self.assertRaises(FileNotFoundError):mod.read_file(disk,'/tmp/skip')
-    def file_session(self,script):
+    def file_session(self,script,max_instructions=None):
         spec=importlib.util.spec_from_file_location('mkrootfs',ROOT/'scripts/mkrootfs.py')
         mod=importlib.util.module_from_spec(spec);spec.loader.exec_module(mod)
         files={'/bin/'+p.stem:p.read_bytes() for p in (ROOT/'build/user').glob('*.spx')}
+        for p in (ROOT/'user/native/include').glob('*.h'): files['/include/'+p.name]=p.read_bytes()
+        for name in ('crt0','syscall','base','heap','stdio','format','string','convert','divsi3'):
+            p=ROOT/'build/native'/(name+'.sym')
+            if p.exists(): files['/lib/'+p.name]=p.read_bytes()
         files['/etc/finish']=b'FILE WORKFLOW PASS\n'
         with tempfile.TemporaryDirectory() as temp:
             disk=pathlib.Path(temp)/'fixture.bin';disk.write_bytes(mod.make_image(files))
             saved=pathlib.Path(temp)/'saved.bin';keys=pathlib.Path(temp)/'keys.txt'
             keys.write_bytes((script+'sync\ncat /etc/finish\n').encode('ascii'))
-            r=subprocess.run([str(ROOT/'emu/emu.exe'),'build/kernel.bin','--disk',str(disk),'--input',str(keys),'--until','FILE WORKFLOW PASS','--write-disk',str(saved)],cwd=ROOT,capture_output=True,timeout=25)
+            args=[str(ROOT/'emu/emu.exe'),'build/kernel.bin','--disk',str(disk),'--input',str(keys),'--until','FILE WORKFLOW PASS','--write-disk',str(saved)]
+            if max_instructions:args+=['--max-instructions',str(max_instructions)]
+            r=subprocess.run(args,cwd=ROOT,capture_output=True,timeout=120 if max_instructions else 25)
             self.assertEqual(r.returncode,0,r.stderr.decode(errors='replace'))
             return mod,saved.read_bytes(),r.stdout
     def test_mkdir_rm_redirection_and_heredoc_persist(self):

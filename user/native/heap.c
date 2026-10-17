@@ -1,10 +1,14 @@
 /* Bounded, reusable heap shared by the native compiler stages. */
 #ifndef SP_HEAP_TEST
 #include "sp.h"
+static unsigned heap_origin,heap_peak;
+unsigned sp_heap_peak(void){return heap_peak;}
 static void *heap_break(unsigned n,int grow) {
     unsigned old=sp_brk(0);
+    if(!heap_origin)heap_origin=old;
     if(!grow)return (void *)old;
     if(n>~0u-old || sp_brk(old+n)!=old+n)return 0;
+    if(old+n-heap_origin>heap_peak)heap_peak=old+n-heap_origin;
     return (void *)old;
 }
 #endif
@@ -50,11 +54,20 @@ void *calloc(unsigned count,unsigned size) {
     return p;
 }
 void *realloc(void *p,unsigned size) {
-    HeapBlock *b;char *out;unsigned i;
+    HeapBlock *b,*next;char *out;unsigned i,aligned;
     if(!p)return malloc(size);
     if(!size){free(p);return 0;}
     b=(HeapBlock *)p-1;
     if(size<=b->size)return p;
+    if(size>~0u-7-sizeof(HeapBlock))return 0;
+    aligned=(size+7)&~7u;next=b->next;
+    if(next && next->available && (char *)(b+1)+b->size==(char *)next &&
+        b->size+sizeof(HeapBlock)+next->size>=aligned) {
+        b->size+=sizeof(HeapBlock)+next->size;b->next=next->next;return p;
+    }
+    if(!next && heap_break(0,0)==(char *)(b+1)+b->size) {
+        if(heap_break(aligned-b->size,1)){b->size=aligned;return p;}
+    }
     out=malloc(size);if(!out)return 0;
     for(i=0;i<b->size;i++)out[i]=((char *)p)[i];
     free(p);return out;

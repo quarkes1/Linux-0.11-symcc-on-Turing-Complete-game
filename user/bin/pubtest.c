@@ -9,8 +9,9 @@ static int content(char *path,char *text) {
     if(f<0)return 0;n=read(f,b,31);close(f);
     if(n<0)return 0;b[n]=0;return !strcmp(b,text);
 }
-int main(void) {
+int main(int argc,char **argv) {
     int a,b,n,pid,status;char buf[256];char *args[3];
+    if(argc>1){if(chmod(argv[1],0755))return 3;execve(argv[1],argv+1,0);return 4;}
     if(create("/tmp/source","NEW") || create("/tmp/dest","OLD"))goto bad;
     if(sp_call(38,(int)"/tmp/missing",(int)"/tmp/dest",0)>=0 || !content("/tmp/dest","OLD"))goto bad;
     if(sp_call(38,(int)"/tmp/source",(int)"/tmp/source",0) || !content("/tmp/source","NEW"))goto bad;

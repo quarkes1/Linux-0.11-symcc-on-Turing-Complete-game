@@ -176,6 +176,14 @@ bool obj_read(Obj *o, FILE *in) {
         }
         if (len == 0) break;   /* EOF */
         line[len] = 0;
+#ifdef SP_NATIVE
+        /* Comments carry no relocation information. Keep quoted data intact. */
+        if(line[0]!='"') {
+            char *comment=strchr(line,';');if(comment)*comment=0;
+            len=strlen(line);
+            while(len && (line[len-1]==' ' || line[len-1]=='\t'))line[--len]=0;
+        }
+#endif
         /* 去行尾换行 */
         while (len > 0 && (line[len - 1] == '\n' || line[len - 1] == '\r'))
             line[--len] = 0;

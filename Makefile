@@ -35,7 +35,7 @@ emu/asm.exe: emu/asm_main.c $(EMU_SRC) $(EMU_HDR)
 	$(CC) $(CFLAGS) -o $@ emu/asm_main.c $(EMU_SRC)
 
 emu/emu.exe: emu/emu_main.c $(EMU_SRC) $(EMU_HDR)
-	$(CC) $(CFLAGS) -o $@ emu/emu_main.c $(EMU_SRC)
+	$(CC) $(CFLAGS) -O2 -o $@ emu/emu_main.c $(EMU_SRC)
 
 tests/asm_test.exe: tests/asm_test.c $(EMU_SRC) $(EMU_HDR)
 	$(CC) $(CFLAGS) -o $@ tests/asm_test.c $(EMU_SRC)
@@ -72,6 +72,7 @@ test: all m3-image system-image
 	python -m unittest discover -s tests -p test_platform_config.py
 	python -m unittest discover -s tests -p test_disk_capacity.py
 	python -m unittest discover -s tests -p test_native_runtime.py
+	python -m unittest discover -s tests -p test_native_compiler.py
 	python -m unittest discover -s tests -p test_emu_cli.py
 
 m3-image: all

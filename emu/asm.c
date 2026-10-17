@@ -24,7 +24,12 @@ typedef struct {
     uint32_t off;
 } Label;
 
+#ifdef SP_NATIVE
+static Label *labels;
+static int label_capacity;
+#else
 static Label labels[MAX_LABELS];
+#endif
 static int nlabels;
 
 static void set_err(AsmError *err, int line, const char *fmt, ...) {
@@ -118,6 +123,14 @@ static int add_label(const char *name, uint32_t off, int lineno, AsmError *err) 
         set_err(err, lineno, "too many labels (max %d)", MAX_LABELS);
         return -1;
     }
+#ifdef SP_NATIVE
+    if(nlabels==label_capacity) {
+        int capacity=label_capacity?label_capacity*2:16;
+        Label *next=realloc(labels,capacity*sizeof(Label));
+        if(!next){set_err(err,lineno,"out of memory for labels");return -1;}
+        labels=next;label_capacity=capacity;
+    }
+#endif
     snprintf(labels[nlabels].name, sizeof labels[nlabels].name, "%s", name);
     labels[nlabels].off = off;
     nlabels++;

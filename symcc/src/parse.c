@@ -90,11 +90,13 @@ typedef struct Var {
     char *name;
     int len;
     int offset;      /* 相对 sp 的负偏移 */
+    char *global_name; /* scoped alias for a static/extern local */
     Type *ty;
 } Var;
 
 static Var *vars;
 static int locals_bytes;   /* 当前函数帧大小累计 */
+static int local_static_id;
 
 /* typedef 表 / 枚举常量表 / struct-union-enum tag 表 */
 typedef struct TDef {
@@ -1221,7 +1223,8 @@ static Node *find_fp_var(Token *t) {
     for (Var *v = vars; v; v = v->next) {
         if (v->len == t->len && strncmp(v->name, t->loc, (size_t)v->len) == 0) {
             if (v->ty->kind == TY_PTR && v->ty->base->kind == TY_FUNC) {
-                Node *n = new_node(ND_VAR, t);
+                Node *n = new_node(v->global_name?ND_GVAR:ND_VAR, t);
+                n->name=v->global_name;
                 n->offset = v->offset;
                 n->ty = v->ty;
                 return n;
@@ -1274,7 +1277,8 @@ static Node *primary(void) {
          * 了全部函数，函数体内的同名参数/局部必须先行命中） */
         for (Var *v = vars; v; v = v->next) {
             if (v->len == tok->len && strncmp(v->name, tok->loc, (size_t)v->len) == 0) {
-                Node *n = new_node(ND_VAR, tok);
+                Node *n = new_node(v->global_name?ND_GVAR:ND_VAR, tok);
+                n->name=v->global_name;
                 n->offset = v->offset;
                 n->ty = v->ty;
                 tok = tok->next;
@@ -1995,20 +1999,18 @@ static Node *decl_stmt(void) {
         Global *hoisted = NULL;
 
         if (decl_is_static) {
-            /* static 局部 → 提升为全局（跨调用共享；同名合并） */
-            hoisted = find_global(name);
-            if (!hoisted) {
-                hoisted = (Global *)calloc(1, sizeof(Global));
-                if (!hoisted) { fprintf(stderr, "out of memory\n"); exit(1); }
-                hoisted->name = xstrndup(name->loc, (size_t)name->len);
-                hoisted->len = name->len;
-                hoisted->ty = ty;
-                hoisted->is_static = true;
-                hoisted->next = globals;
-                globals = hoisted;
-            }
+            /* One private symbol per declaration, bound in lexical scope. */
+            hoisted = (Global *)calloc(1, sizeof(Global));
+            if (!hoisted) { fprintf(stderr, "out of memory\n"); exit(1); }
+            char unique[40];snprintf(unique,sizeof unique,"__local_static_%d",local_static_id++);
+            hoisted->name = xstrndup(unique,strlen(unique));
+            hoisted->len = strlen(unique);
+            hoisted->ty = ty;
+            hoisted->is_static = true;
+            hoisted->next = globals;
+            globals = hoisted;
             Node *g = new_node(ND_GVAR, name);
-            g->name = xstrndup(name->loc, (size_t)name->len);
+            g->name = hoisted->name;
             g->ty = ty;
             target = g;
         } else if (decl_is_extern) {
@@ -2045,6 +2047,12 @@ static Node *decl_stmt(void) {
             target = vn;
         }
 
+        if(hoisted) {
+            Var *binding=calloc(1,sizeof(Var));
+            if(!binding){fprintf(stderr,"out of memory\n");exit(1);}
+            binding->name=name->loc;binding->len=name->len;binding->ty=ty;
+            binding->global_name=hoisted->name;binding->next=vars;vars=binding;
+        }
         if (inferred || tok_is(tok, "=")) {
             if (!inferred)
                 tok = tok->next;
@@ -2910,6 +2918,7 @@ Program *parse(Token *toks) {
     enums = NULL;
     tags = NULL;
     nstrings = 0;
+    local_static_id=0;
 
     /* 类型单例初始化 */
     ty_int = (Type *)calloc(1, sizeof(Type));

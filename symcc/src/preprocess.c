@@ -1406,17 +1406,15 @@ static char *unparse(Token *toks) {
             break;
         }
         case TK_STR: {
-            grow(&buf, &cap, (size_t)n + (size_t)t->str_len * 2 + 3);
+            grow(&buf, &cap, (size_t)n + (size_t)t->str_len * 4 + 3);
             buf[n++] = '"';
             for (int i = 0; i < t->str_len; i++) {
-                if (t->str[i] == '"' || t->str[i] == '\\')
-                    buf[n++] = '\\';
-                else if (t->str[i] == '\0') {
-                    buf[n++] = '\\';
-                    buf[n++] = '0';
-                } else {
-                    buf[n++] = t->str[i];
-                }
+                unsigned c=(unsigned char)t->str[i];
+                if(c=='"' || c=='\\'){buf[n++]='\\';buf[n++]=c;}
+                else if(c<32 || c>=127) {
+                    buf[n++]='\\';buf[n++]='0'+((c>>6)&7);
+                    buf[n++]='0'+((c>>3)&7);buf[n++]='0'+(c&7);
+                } else buf[n++]=c;
             }
             buf[n++] = '"';
             break;

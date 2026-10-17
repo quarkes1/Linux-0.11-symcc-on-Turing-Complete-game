@@ -144,7 +144,11 @@ static void be32(FILE *f,unsigned v) {
     fwrite(b,1,4,f);
 }
 bool symld_link_ex(Obj **objs,int n,const char *crt0,const LinkOptions *opt,FILE *out,FILE *bin,LinkError *err) {
+#ifdef SP_NATIVE
+    if(!opt || opt->image_kind!=SP_IMAGE_USER){strcpy(err->msg,"native linker requires user image");return false;}
+#else
     if(!opt || opt->image_kind==SP_IMAGE_LEGACY)return symld_link(objs,n,crt0,out,bin,err);
+#endif
     Image im={0};im.err=err;
     Obj *start=obj_new(); Obj **all=calloc(n+1,sizeof *all);
     unsigned *ts=calloc(n+1,sizeof *ts),*ds=calloc(n+1,sizeof *ds);
@@ -209,7 +213,10 @@ bool symld_link_ex(Obj **objs,int n,const char *crt0,const LinkOptions *opt,FILE
     if(im.failed)goto done;
     if(out)fwrite(im.out,1,im.used,out);
     if(bin) {
-        AsmError ae;size_t cap=im.used+65536;uint8_t *bytes=malloc(cap);
+        AsmError ae;size_t cap=loaded-base;uint8_t *bytes;
+        if(opt->image_kind==SP_IMAGE_KERNEL)cap=bssend;
+        bytes=malloc(cap?cap:1);
+        if(!bytes){fail(&im,"out of memory assembling image");goto done;}
         int len=asm_assemble(im.out,bytes,cap,&ae);
         if(len<0){fail(&im,"image asm line %d: %s",ae.line,ae.msg);free(bytes);goto done;}
         if(opt->image_kind==SP_IMAGE_USER) {

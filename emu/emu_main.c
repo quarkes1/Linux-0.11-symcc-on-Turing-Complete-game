@@ -3,6 +3,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <errno.h>
 #ifdef _WIN32
 #include <conio.h>
 #include <io.h>
@@ -78,13 +79,15 @@ static unsigned char *load(const char *path,size_t *len,size_t max) {
 }
 static int usage(void) {
     fputs("usage: emu.exe image.bin [ram_size] [--disk rootfs.bin] [--interactive]\n"
-          "       [--input keys.txt] [--until screen-text] [--write-disk output.bin]\n",stderr);
+          "       [--input keys.txt] [--until screen-text] [--write-disk output.bin]\n"
+          "       [--max-instructions positive-integer]\n",stderr);
     return 2;
 }
 int main(int argc,char **argv) {
     const char *disk_path=NULL,*write_path=NULL,*input_path=NULL;
     unsigned char *bin,*disk=NULL;size_t len,disk_len=0,ram=SP_RAM_BYTES;
     Console console={0};EmuOptions options={0};EmuResult r;int status;
+    uint64_t budget=0;
     if(argc<2)return usage();
     for(int i=2;i<argc;i++) {
         if(!strcmp(argv[i],"--interactive"))console.interactive=1;
@@ -92,6 +95,12 @@ int main(int argc,char **argv) {
         else if(!strcmp(argv[i],"--write-disk") && i+1<argc)write_path=argv[++i];
         else if(!strcmp(argv[i],"--until") && i+1<argc)console.until=argv[++i];
         else if(!strcmp(argv[i],"--input") && i+1<argc)input_path=argv[++i];
+        else if(!strcmp(argv[i],"--max-instructions") && i+1<argc) {
+            char *end;const char *value=argv[++i];errno=0;
+            if(*value<'0' || *value>'9')return usage();
+            budget=strtoull(value,&end,10);
+            if(*end || !budget || errno==ERANGE)return usage();
+        }
         else if(i==2 && argv[i][0]!='-') {
             char *end;unsigned long v=strtoul(argv[i],&end,0);
             if(*end || !v || v>(64u<<20) || (v&(v-1)))return usage();
@@ -106,8 +115,9 @@ int main(int argc,char **argv) {
     options.disk=disk;options.disk_len=disk_len;options.opaque=&console;
     options.observe=observe;options.ns_per_instruction=1000;
     if(console.interactive || console.input)options.keyboard=keyboard;
-    r=emu_run_ex(bin,len,ram,console.interactive?UINT64_MAX:2000000000ULL,&options);
+    r=emu_run_ex(bin,len,ram,budget?budget:(console.interactive?UINT64_MAX:2000000000ULL),&options);
     status=r.error?1:0;
+    if(budget)fprintf(stderr,"instructions = %llu\n",(unsigned long long)r.instructions);
     if(r.mem && ram>=0x2f00 && (!console.terminal || !console.interactive))draw((const char *)r.mem+0x2000,0);
     if(r.error)fprintf(stderr,"emulator error=%d after %llu instructions\n",r.error,(unsigned long long)r.instructions);
     else if(!console.interactive)printf("exit_code = %d\n",r.exit_code);
