@@ -10,6 +10,6 @@ for source in user/bin/*.c; do
     name=$(basename "$source" .c)
     extra=()
     if [ "$name" = sh ]; then extra+=(build/user/shell_parse.sym); fi
-    symcc/symcc.exe --d32 -I user/include -c "$source" -o "build/user/$name.sym"
+    symcc/symcc.exe --d32 -I user/include -I runtime -c "$source" -o "build/user/$name.sym"
     symld/symld.exe --image user --crt0 user/lib/crt0.sym user/lib/syscall.sym build/user/libc.sym build/user/divsi3.sym "${extra[@]}" "build/user/$name.sym" -o "build/user/$name.asm" --bin "build/user/$name.spx"
 done

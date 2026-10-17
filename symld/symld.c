@@ -10,6 +10,7 @@
 
 #include "symcc/src/obj.h"
 #include "symcc/src/link.h"
+#include "runtime/platform.h"
 
 static void usage(void) {
     fprintf(stderr,
@@ -28,7 +29,7 @@ int main(int argc, char **argv) {
             const char *kind=argv[++i];
             if(!strcmp(kind,"kernel"))options.image_kind=SP_IMAGE_KERNEL;
             else if(!strcmp(kind,"user")) {
-                options.image_kind=SP_IMAGE_USER;options.base=0x200000;options.limit=0x270000;
+                options.image_kind=SP_IMAGE_USER;options.base=SP_USER_BASE;options.limit=SP_USER_BASE+SP_USER_SIZE-65536;
             } else {usage();return 2;}
         } else if (strcmp(argv[i], "-o") == 0 && i + 1 < argc) {
             out_asm = argv[++i];

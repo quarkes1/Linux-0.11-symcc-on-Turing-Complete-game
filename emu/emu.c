@@ -10,6 +10,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "emu/emu.h"
+#include "runtime/platform.h"
 
 /* 与游戏 DiskA 组件容量一致（2026-08-20 用户实测设置：8MB） */
 #define DISK_SIZE (8 << 20)
@@ -53,8 +54,8 @@ EmuResult emu_run_ex(const uint8_t *bin, size_t bin_len, size_t ram_size, uint64
     if (ram_size < 1) ram_size = 1;
     r.mem = (uint8_t *)calloc(ram_size, 1);
     r.mem_size = ram_size;
-    r.disk = (uint8_t *)calloc(DISK_SIZE, 1);
-    r.disk_size = DISK_SIZE;
+    r.disk_size = opt && opt->disk_len>DISK_SIZE ? SP_DISK_BYTES : DISK_SIZE;
+    r.disk = (uint8_t *)calloc(r.disk_size, 1);
     if (!r.mem || !r.disk) {
         error = 2;
         goto done;
@@ -65,7 +66,7 @@ EmuResult emu_run_ex(const uint8_t *bin, size_t bin_len, size_t ram_size, uint64
     }
     memcpy(r.mem, bin, bin_len);
     if (opt && opt->disk_len) {
-        if (!opt->disk || opt->disk_len > DISK_SIZE) { error = 2; goto done; }
+        if (!opt->disk || opt->disk_len > SP_DISK_BYTES) { error = 2; goto done; }
         memcpy(r.disk, opt->disk, opt->disk_len);
     }
 

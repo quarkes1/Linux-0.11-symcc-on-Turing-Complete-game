@@ -228,7 +228,7 @@ void sp_boot(void) {
     int i,exec_result;SpContext *ctx;
     tty_init();printk("SymphonyPlus Linux: interactive boot\n");
     printk("[ OK ] tty_init: 96x40 console ready\n");
-    printk("[ OK ] Memory layout: 8 MiB RAM, 512 KiB user window\n");
+    printk("[ OK ] Memory layout: %u MiB RAM, %u KiB user window\n",SP_RAM_BYTES/1048576,SP_USER_SIZE/1024);
     for(i=1;i<NR_TASKS;i++)task[i]=NULL;
     process[1]=*current;current=&process[1];task[1]=current;
     current->pid=1;current->father=0;current->state=TASK_RUNNING;current->tty=0;

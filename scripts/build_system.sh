@@ -15,4 +15,5 @@ while IFS= read -r source; do
 done < <(find Reference/Linux-0.11-main -name '*.c' ! -path '*/tools/*' | sort)
 symcc/symcc.exe --d32 -c runtime/divsi3.c -o build/interactive/divsi3.sym
 symld/symld.exe --image kernel --crt0 runtime/crt0_interactive.asm runtime/platform.sym "${objects[@]}" build/interactive/divsi3.sym -o build/kernel.asm --bin build/kernel.bin
+python scripts/platform_config.py --pad-kernel build/kernel.bin
 echo 'INTERACTIVE SYSTEM BUILD OK'

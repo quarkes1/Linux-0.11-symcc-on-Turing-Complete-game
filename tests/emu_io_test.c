@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include "emu/asm.h"
 #include "emu/emu.h"
+#include "runtime/platform.h"
 int main(void) {
     unsigned char bin[512], disk[8] = {0x12,0x34,0x56,0x78};
     AsmError e;
@@ -30,7 +31,7 @@ int main(void) {
     n=asm_assemble("mov r1,8\nscreen r1,0\n",bin,sizeof bin,&e);
     assert(n>0);r=emu_run(bin,n,8<<20,100);
     assert(r.error==2);free(r.mem);free(r.disk);
-    opt.disk_len=(8u<<20)+1;
+    opt.disk_len=SP_DISK_BYTES+1;
     r=emu_run_ex(bin,n,8<<20,100,&opt);
     assert(r.error==2);free(r.mem);free(r.disk);
     return 0;

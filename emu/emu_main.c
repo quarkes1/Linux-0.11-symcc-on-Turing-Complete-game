@@ -13,6 +13,7 @@
 #include <sys/select.h>
 #endif
 #include "emu/emu.h"
+#include "runtime/platform.h"
 typedef struct {
     char screen[3841];
     const char *until;
@@ -82,7 +83,7 @@ static int usage(void) {
 }
 int main(int argc,char **argv) {
     const char *disk_path=NULL,*write_path=NULL,*input_path=NULL;
-    unsigned char *bin,*disk=NULL;size_t len,disk_len=0,ram=8<<20;
+    unsigned char *bin,*disk=NULL;size_t len,disk_len=0,ram=SP_RAM_BYTES;
     Console console={0};EmuOptions options={0};EmuResult r;int status;
     if(argc<2)return usage();
     for(int i=2;i<argc;i++) {
@@ -93,7 +94,7 @@ int main(int argc,char **argv) {
         else if(!strcmp(argv[i],"--input") && i+1<argc)input_path=argv[++i];
         else if(i==2 && argv[i][0]!='-') {
             char *end;unsigned long v=strtoul(argv[i],&end,0);
-            if(*end || !v || v>(8u<<20))return usage();
+            if(*end || !v || v>(64u<<20) || (v&(v-1)))return usage();
             ram=v;
         } else return usage();
     }
@@ -101,7 +102,7 @@ int main(int argc,char **argv) {
     if(input_path && !(console.input=fopen(input_path,"rb"))){perror(input_path);return 2;}
     console.terminal=isatty(fileno(stdout));
     bin=load(argv[1],&len,ram);if(!bin){if(console.input)fclose(console.input);return 2;}
-    if(disk_path && !(disk=load(disk_path,&disk_len,8<<20))){free(bin);if(console.input)fclose(console.input);return 2;}
+    if(disk_path && !(disk=load(disk_path,&disk_len,SP_DISK_BYTES))){free(bin);if(console.input)fclose(console.input);return 2;}
     options.disk=disk;options.disk_len=disk_len;options.opaque=&console;
     options.observe=observe;options.ns_per_instruction=1000;
     if(console.interactive || console.input)options.keyboard=keyboard;

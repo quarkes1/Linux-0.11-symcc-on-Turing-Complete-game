@@ -51,6 +51,7 @@ test: all m3-image system-image
 	tests/link_test.exe
 	tests/kernel_boot_test.exe
 	tests/platform_test.exe
+	tests/bridge_copy_test.exe
 	tests/emu_io_test.exe
 	tests/user_link_test.exe
 	tests/shell_test.exe
@@ -66,6 +67,7 @@ test: all m3-image system-image
 	tests/shell_parse_test.exe
 	tests/tick_test.exe
 	python -m unittest discover -s tests -p test_mkrootfs.py
+	python -m unittest discover -s tests -p test_platform_config.py
 	python -m unittest discover -s tests -p test_emu_cli.py
 
 m3-image: all
@@ -84,6 +86,10 @@ symcc/symcc.exe symld/symld.exe tests/run_tests.exe tests/link_test.exe tests/us
 all: tests/platform_test.exe tests/emu_io_test.exe tests/user_link_test.exe tests/shell_test.exe
 all: tests/tick_test.exe
 all: tests/shell_parse_test.exe
+all: tests/bridge_copy_test.exe
+
+tests/bridge_copy_test.exe: tests/bridge_copy_test.c $(SYMCC_LIB) $(EMU_SRC) $(PLATFORM_HDR)
+	$(CC) $(CFLAGS) -o $@ tests/bridge_copy_test.c $(SYMCC_LIB) $(EMU_SRC)
 
 tests/shell_parse_test.exe: tests/shell_parse_test.c user/lib/shell_parse.c user/include/shell.h
 	$(CC) $(CFLAGS) -Iuser/include -o $@ tests/shell_parse_test.c user/lib/shell_parse.c
@@ -100,5 +106,5 @@ tests/emu_io_test.exe: tests/emu_io_test.c $(EMU_SRC) $(EMU_HDR)
 tests/user_link_test.exe: tests/user_link_test.c $(SYMCC_LIB) $(EMU_SRC) $(EMU_HDR)
 	$(CC) $(CFLAGS) -o $@ tests/user_link_test.c $(SYMCC_LIB) $(EMU_SRC)
 
-tests/shell_test.exe: tests/shell_test.c emu/emu.c emu/emu.h
+tests/shell_test.exe: tests/shell_test.c emu/emu.c emu/emu.h runtime/platform.h
 	$(CC) $(CFLAGS) -O2 -o $@ tests/shell_test.c emu/emu.c

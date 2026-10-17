@@ -15,7 +15,7 @@ sp_syscall_entry:
     push r12
     push r13
     mov r1, sp
-    mov r2, 40
+    mov r2, 24
     lsl r2, r2, 16
     or r2, r2, 0
     add r3, r1, 48
@@ -81,7 +81,7 @@ sp_syscall_entry:
     load_32 r4, [r3]
     add r3, r2, 64
     store_32 [r3], r4
-    mov sp, 48
+    mov sp, 32
     lsl sp, sp, 16
     or sp, sp, 0
     push r2
@@ -154,6 +154,43 @@ sp_copy:
     add r9, sp, 12
     load_32 r3, [r9]
 sp_copy_loop:
+    cmp r3, 32
+    jb sp_copy_tail
+    load_32 r4, [r2]
+    store_32 [r1], r4
+    add r1, r1, 4
+    add r2, r2, 4
+    load_32 r4, [r2]
+    store_32 [r1], r4
+    add r1, r1, 4
+    add r2, r2, 4
+    load_32 r4, [r2]
+    store_32 [r1], r4
+    add r1, r1, 4
+    add r2, r2, 4
+    load_32 r4, [r2]
+    store_32 [r1], r4
+    add r1, r1, 4
+    add r2, r2, 4
+    load_32 r4, [r2]
+    store_32 [r1], r4
+    add r1, r1, 4
+    add r2, r2, 4
+    load_32 r4, [r2]
+    store_32 [r1], r4
+    add r1, r1, 4
+    add r2, r2, 4
+    load_32 r4, [r2]
+    store_32 [r1], r4
+    add r1, r1, 4
+    add r2, r2, 4
+    load_32 r4, [r2]
+    store_32 [r1], r4
+    add r1, r1, 4
+    add r2, r2, 4
+    sub r3, r3, 32
+    jmp sp_copy_loop
+sp_copy_tail:
     cmp r3, 0
     je sp_copy_done
     load_32 r4, [r2]
@@ -161,7 +198,7 @@ sp_copy_loop:
     add r1, r1, 4
     add r2, r2, 4
     sub r3, r3, 4
-    jmp sp_copy_loop
+    jmp sp_copy_tail
 sp_copy_done:
     ret
 sp_zero:
@@ -170,12 +207,33 @@ sp_zero:
     add r9, sp, 8
     load_32 r2, [r9]
 sp_zero_loop:
+    cmp r2, 32
+    jb sp_zero_tail
+    store_32 [r1], zr
+    add r1, r1, 4
+    store_32 [r1], zr
+    add r1, r1, 4
+    store_32 [r1], zr
+    add r1, r1, 4
+    store_32 [r1], zr
+    add r1, r1, 4
+    store_32 [r1], zr
+    add r1, r1, 4
+    store_32 [r1], zr
+    add r1, r1, 4
+    store_32 [r1], zr
+    add r1, r1, 4
+    store_32 [r1], zr
+    add r1, r1, 4
+    sub r2, r2, 32
+    jmp sp_zero_loop
+sp_zero_tail:
     cmp r2, 0
     je sp_zero_done
     store_32 [r1], zr
     add r1, r1, 4
     sub r2, r2, 4
-    jmp sp_zero_loop
+    jmp sp_zero_tail
 sp_zero_done:
     ret
 .sym sp_syscall_entry T text 0 0

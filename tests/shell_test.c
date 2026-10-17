@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "emu/emu.h"
+#include "runtime/platform.h"
 static const char *script="ls /bin\ncat /etc/motd\necho hello\nforktest\nnosuchcommand\necho abx\bC\ncd /etc\ncat motd\nexit\necho finished\n";
 static int input_at,can_type,shift_event,release_event,shift_code=16;
 static unsigned char queued;
@@ -130,7 +131,7 @@ int main(int argc,char **argv) {
     EmuOptions opt={0};EmuResult r;
     opt.disk=disk;opt.disk_len=dn;opt.keyboard=keyboard;opt.observe=seen;opt.ns_per_instruction=1000;
     bin[0x1fff]=0xa5;bin[0x2f00]=0x5a;
-    r=emu_run_ex(bin,bn,8<<20,5000000000ULL,&opt);
+    r=emu_run_ex(bin,bn,SP_RAM_BYTES,5000000000ULL,&opt);
     for(int i=0;i<40;i++) { fwrite(r.mem+0x2000+i*96,1,96,stdout);putchar('\n'); }
     fprintf(stderr,"stop=%d error=%d instructions=%llu\n",r.stop_reason,r.error,(unsigned long long)r.instructions);
     int ok=r.stop_reason==1 && !r.error && r.mem[0x1fff]==0xa5 && r.mem[0x2f00]==0x5a;

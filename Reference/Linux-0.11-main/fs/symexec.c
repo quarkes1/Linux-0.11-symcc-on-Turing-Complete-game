@@ -11,8 +11,8 @@ static unsigned get32(unsigned char *p) {
     return ((unsigned)p[0]<<24)|((unsigned)p[1]<<16)|((unsigned)p[2]<<8)|p[3];
 }
 int sp_execve(const char *path,char **argv,char **envp,SpContext *ctx) {
-    unsigned char *stage=(unsigned char *)0x300000;
-    char *strings=(char *)0x380000;
+    unsigned char *stage=(unsigned char *)SP_EXEC_STAGE;
+    char *strings=(char *)SP_ARG_STAGE;
     unsigned offsets[64],counts[2],used=0,i,j,k,n,loaded,bss,stack,entry,sp,argv_addr,envp_addr;
     char **list;char *s;char filename[256];int fd,got,result= -ENOEXEC;
     for(i=0;i<255 && path[i];i++)filename[i]=path[i];

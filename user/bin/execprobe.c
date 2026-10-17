@@ -1,9 +1,10 @@
 #include "sp.h"
+#include "platform.h"
 int main(void) {
     unsigned h[8];char *args[34];int i,fd;struct stat s;
     for(i=0;i<34;i++)args[i]="arg";args[33]=0;
     if(execve("/bin/echo",args,0)!= -1 || errno!=7){puts("EXEC FAIL args\n");return 1;}
-    if(sp_call(11,(int)"/bin/echo",0x27fffe,0)!= -14){puts("EXEC FAIL pointers\n");return 2;}
+    if(sp_call(11,(int)"/bin/echo",SP_USER_BASE+SP_USER_SIZE-2,0)!= -14){puts("EXEC FAIL pointers\n");return 2;}
     if(execve("/no-such-program",0,0)!= -1 || errno!=2){puts("EXEC FAIL missing\n");return 3;}
     for(i=0;i<7;i++)h[i]=0;
     fd=open("/tmp/bad",578,0755);
