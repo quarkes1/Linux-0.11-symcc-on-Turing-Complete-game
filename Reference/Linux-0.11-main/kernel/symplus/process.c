@@ -19,6 +19,8 @@ extern int sys_rmdir(const char *);
 extern int sys_stat(const char *,void *);
 extern int sys_fstat(unsigned,void *);
 extern int sys_sync(void);
+extern int sys_chmod(const char *,int);
+extern int sys_rename(const char *,const char *);
 extern int ROOT_DEV;
 extern void mount_root(void);
 extern void printk(const char *,...);
@@ -174,6 +176,7 @@ static int perform(unsigned nr,unsigned a,unsigned b,unsigned c,SpContext *ctx) 
         if(!user_string((char *)a))return -EFAULT;
         return sp_execve((char *)a,(char **)b,(char **)c,ctx);
     case 12:if(!user_string((char *)a))return -EFAULT;return sys_chdir((char *)a);
+    case 15:if(!user_string((char *)a))return -EFAULT;return sys_chmod((char *)a,b);
     case 18:
         if(!user_string((char *)a)||!sp_user_range(b,sizeof(struct stat)))return -EFAULT;
         return sys_stat((char *)a,(void *)b);
@@ -181,6 +184,9 @@ static int perform(unsigned nr,unsigned a,unsigned b,unsigned c,SpContext *ctx) 
     case 20:return current->pid;
     case 28:if(!sp_user_range(b,sizeof(struct stat)))return -EFAULT;return sys_fstat(a,(void *)b);
     case 36:return sys_sync();
+    case 38:
+        if(!user_string((char *)a)||!user_string((char *)b))return -EFAULT;
+        return sys_rename((char *)a,(char *)b);
     case 39:if(!user_string((char *)a))return -EFAULT;return sys_mkdir((char *)a,b);
     case 40:if(!user_string((char *)a))return -EFAULT;return sys_rmdir((char *)a);
     case 41:return sys_dup(a);

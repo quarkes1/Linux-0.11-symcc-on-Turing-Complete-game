@@ -22,6 +22,8 @@ int sync(void){return result(sp_call(36,0,0,0));}
 int ps(void){return result(sp_call(100,0,0,0));}
 int yield(void){return result(sp_call(101,0,0,0));}
 unsigned sp_brk(unsigned n){return sp_call(45,n,0,0);}
+int chmod(char *p,int mode){return result(sp_call(15,(int)p,mode,0));}
+int rename(char *a,char *b){return result(sp_call(38,(int)a,(int)b,0));}
 int stat(char *p,struct stat *s){return result(sp_call(18,(int)p,(int)s,0));}
 int fstat(int f,struct stat *s){return result(sp_call(28,f,(int)s,0));}
 int strlen(char *s){int n=0;while(s[n])n++;return n;}

@@ -716,6 +716,48 @@ int sys_unlink(const char * name)
 	return 0;
 }
 
+/* SYMPLUS-PORT: regular-file publication on one filesystem. The cooperative
+ * dispatcher cannot switch processes inside this commit. No fallible lookup
+ * remains after the destination entry has been obtained. */
+int sys_rename(const char *oldname,const char *newname)
+{
+    const char *oname,*nname;
+    int olen,nlen,result=-ENOENT;
+    struct m_inode *od=NULL,*nd=NULL,*src=NULL,*dst=NULL;
+    struct buffer_head *ob=NULL,*nb=NULL;
+    struct dir_entry *oe,*ne;
+    od=dir_namei(oldname,&olen,&oname);
+    nd=dir_namei(newname,&nlen,&nname);
+    if(!od || !nd || !olen || !nlen)goto out;
+    if(olen>NAME_LEN || nlen>NAME_LEN){result=-ENAMETOOLONG;goto out;}
+    if(od->i_dev!=nd->i_dev){result=-EXDEV;goto out;}
+    if(!permission(od,MAY_WRITE) || !permission(nd,MAY_WRITE)){result=-EACCES;goto out;}
+    ob=find_entry(&od,oname,olen,&oe);if(!ob)goto out;
+    src=iget(od->i_dev,oe->inode);if(!src)goto out;
+    if(!S_ISREG(src->i_mode)){result=-EPERM;goto out;}
+    if(src->i_dev!=nd->i_dev){result=-EXDEV;goto out;}
+    if((od->i_mode&S_ISVTX) && !suser() && current->euid!=od->i_uid && current->euid!=src->i_uid){result=-EPERM;goto out;}
+    nb=find_entry(&nd,nname,nlen,&ne);
+    if(nb) {
+        dst=iget(nd->i_dev,ne->inode);if(!dst)goto out;
+        if(dst==src){result=0;goto out;}
+        if(!S_ISREG(dst->i_mode)){result=-EPERM;goto out;}
+        if((nd->i_mode&S_ISVTX) && !suser() && current->euid!=nd->i_uid && current->euid!=dst->i_uid){result=-EPERM;goto out;}
+    } else {
+        nb=add_entry(nd,nname,nlen,&ne);
+        if(!nb){result=-ENOSPC;goto out;}
+    }
+    ne->inode=src->i_num;oe->inode=0;
+    nb->b_dirt=1;ob->b_dirt=1;
+    od->i_ctime=od->i_mtime=nd->i_ctime=nd->i_mtime=CURRENT_TIME;
+    od->i_dirt=nd->i_dirt=1;src->i_ctime=CURRENT_TIME;src->i_dirt=1;
+    if(dst){dst->i_nlinks--;dst->i_ctime=CURRENT_TIME;dst->i_dirt=1;}
+    result=0;
+out:
+    brelse(nb);brelse(ob);iput(dst);iput(src);iput(nd);iput(od);
+    return result;
+}
+
 int sys_link(const char * oldname, const char * newname)
 {
 	struct dir_entry * de;

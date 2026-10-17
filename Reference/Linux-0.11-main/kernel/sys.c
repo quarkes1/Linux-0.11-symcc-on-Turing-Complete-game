@@ -38,10 +38,6 @@ int sys_gtty()
 	return -ENOSYS;
 }
 
-int sys_rename()
-{
-	return -ENOSYS;
-}
 
 int sys_prof()
 {
