@@ -66,10 +66,12 @@ test: all m3-image system-image
 	tests/shell_test.exe --lists
 	tests/shell_test.exe --reset
 	tests/shell_parse_test.exe
+	tests/native_heap_test.exe
 	tests/tick_test.exe
 	python -m unittest discover -s tests -p test_mkrootfs.py
 	python -m unittest discover -s tests -p test_platform_config.py
 	python -m unittest discover -s tests -p test_disk_capacity.py
+	python -m unittest discover -s tests -p test_native_runtime.py
 	python -m unittest discover -s tests -p test_emu_cli.py
 
 m3-image: all
@@ -92,6 +94,10 @@ all: tests/shell_parse_test.exe
 all: tests/bridge_copy_test.exe
 all: tests/capacity_probe_test.exe
 all: tests/disk_capacity_test.exe
+all: tests/native_heap_test.exe
+
+tests/native_heap_test.exe: tests/native_heap_test.c user/native/heap.c
+	$(CC) $(CFLAGS) -O2 -o $@ tests/native_heap_test.c
 
 tests/disk_capacity_test.exe: tests/disk_capacity_test.c emu/emu.c $(EMU_HDR) runtime/platform.h
 	$(CC) $(CFLAGS) -O2 -o $@ tests/disk_capacity_test.c emu/emu.c

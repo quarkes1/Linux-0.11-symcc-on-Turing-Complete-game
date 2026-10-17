@@ -45,6 +45,7 @@ int sp_execve(const char *path,char **argv,char **envp,SpContext *ctx) {
     entry=get32(stage+8);loaded=get32(stage+12);bss=get32(stage+16);stack=get32(stage+20);
     if(!loaded || entry>=loaded || (entry&3) || stack<16384 || stack>SP_USER_SIZE)goto bad;
     if(loaded>SP_USER_SIZE-stack || bss>SP_USER_SIZE-stack-loaded)goto bad;
+    if(((loaded+bss+3)&~3u)>SP_USER_SIZE-stack)goto bad;
     n=0;
     while(n<loaded) {
         got=sys_read(fd,(char *)stage+n,loaded-n);
@@ -70,6 +71,10 @@ int sp_execve(const char *path,char **argv,char **envp,SpContext *ctx) {
     ctx->regs[14]=sp;ctx->pc=SP_USER_BASE+entry;
     for(i=0;i<NR_OPEN;i++)if(current->close_on_exec&(1u<<i))sys_close(i);
     current->close_on_exec=0;
+    /* SYMPLUS-PORT: bounded heap starts after BSS, below reserved stack. */
+    current->end_data=SP_USER_BASE+((loaded+bss+3)&~3u);
+    current->brk=current->end_data;
+    current->start_stack=SP_USER_BASE+SP_USER_SIZE-stack;
     return 0x70000000;
 bad:
     sys_close(fd);return result;

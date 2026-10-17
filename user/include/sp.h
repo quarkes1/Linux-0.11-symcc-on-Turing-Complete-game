@@ -29,6 +29,7 @@ int rmdir(char *);
 int sync(void);
 int ps(void);
 int yield(void);
+unsigned sp_brk(unsigned);
 struct stat {
     unsigned short st_dev,st_ino,st_mode;
     unsigned char st_nlink;

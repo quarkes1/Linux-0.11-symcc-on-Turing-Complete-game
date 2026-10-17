@@ -184,6 +184,10 @@ static int perform(unsigned nr,unsigned a,unsigned b,unsigned c,SpContext *ctx) 
     case 39:if(!user_string((char *)a))return -EFAULT;return sys_mkdir((char *)a,b);
     case 40:if(!user_string((char *)a))return -EFAULT;return sys_rmdir((char *)a);
     case 41:return sys_dup(a);
+    /* SYMPLUS-PORT: per-process break; fork copies these task fields. */
+    case 45:
+        if(a>=current->end_data && a<=current->start_stack)current->brk=a;
+        return current->brk;
     case 63:return sys_dup2(a,b);
     case 64:return current->father;
     case 100: {
