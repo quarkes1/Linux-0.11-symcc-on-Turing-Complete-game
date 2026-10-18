@@ -2,6 +2,16 @@ import pathlib,sys,struct,unittest,re,json,tempfile,subprocess
 sys.path.insert(0,str(pathlib.Path(__file__).resolve().parent))
 import test_emu_cli
 class NativeCompilerTest(unittest.TestCase):
+    def test_macro_expansion_heap_exhaustion_is_a_clean_compile_failure(self):
+        old=(test_emu_cli.ROOT/'build/user/echo.spx').read_bytes()
+        source=b'#define L "'+b'x'*8192+b'"\nchar *a[]={'+b','.join([b'L']*400)+b'};\nint main(void){return 0;}\n'
+        mod,disk,screen=test_emu_cli.CliTest().file_session(
+            'symcc /tmp/huge.c -o /tmp/keep && echo wrong>/tmp/ran\n',
+            max_instructions=2000000000,extra_files={'/tmp/huge.c':source,'/tmp/keep':old})
+        self.assertEqual(mod.read_file(disk,'/tmp/keep'),old)
+        with self.assertRaises(FileNotFoundError):mod.read_file(disk,'/tmp/ran')
+        self.assertIn(b'out of memory',screen)
+
     def test_aggregate_bss_and_stack_overflow_preserve_output(self):
         mod,disk,screen=test_emu_cli.CliTest().file_session(
             'cd /tmp\ncat /bin/echo>keep\ncat /bin/echo>before\n'

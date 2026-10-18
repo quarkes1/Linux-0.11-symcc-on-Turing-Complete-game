@@ -42,7 +42,7 @@ class CliTest(unittest.TestCase):
         mod,disk,screen=self.file_session('sh && echo bad>/tmp/skip || echo seven>/tmp/seven\nexit 7\n')
         self.assertEqual(mod.read_file(disk,'/tmp/seven'),b'seven\n')
         with self.assertRaises(FileNotFoundError):mod.read_file(disk,'/tmp/skip')
-    def file_session(self,script,max_instructions=None):
+    def file_session(self,script,max_instructions=None,extra_files=None):
         spec=importlib.util.spec_from_file_location('mkrootfs',ROOT/'scripts/mkrootfs.py')
         mod=importlib.util.module_from_spec(spec);spec.loader.exec_module(mod)
         files={'/bin/'+p.stem:p.read_bytes() for p in (ROOT/'build/user').glob('*.spx')}
@@ -51,6 +51,7 @@ class CliTest(unittest.TestCase):
             p=ROOT/'build/native'/(name+'.sym')
             if p.exists(): files['/lib/'+p.name]=p.read_bytes()
         files['/etc/finish']=b'FILE WORKFLOW PASS\n'
+        if extra_files:files.update(extra_files)
         with tempfile.TemporaryDirectory() as temp:
             disk=pathlib.Path(temp)/'fixture.bin';disk.write_bytes(mod.make_image(files))
             saved=pathlib.Path(temp)/'saved.bin';keys=pathlib.Path(temp)/'keys.txt'

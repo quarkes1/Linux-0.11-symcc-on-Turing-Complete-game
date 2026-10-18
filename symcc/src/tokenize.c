@@ -269,6 +269,7 @@ Token *tokenize(const char *p) {
             while(*end && *end!='"'){if(*end=='\\' && end[1])end++;end++;}
             size_t cap=(size_t)(end-p)+1;
             char *buf = (char *)malloc(cap);
+            if(!buf){fprintf(stderr,"out of memory\n");exit(1);}
             int blen = 0;
             p++;
             while (*p && *p != '"') {

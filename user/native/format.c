@@ -51,8 +51,8 @@ int sprintf(char *s,const char *fmt,...){va_list ap;int n;va_start(ap,fmt);n=vsn
 int vfprintf(FILE *f,const char *fmt,va_list ap) {
     char small[256],*buf=small;va_list copy;int n,r;
     va_copy(copy,ap);n=vsnprintf(small,sizeof small,fmt,copy);va_end(copy);
-    if(n<0)return -1;
-    if(n>=(int)sizeof small){buf=malloc(n+1);if(!buf)return -1;vsnprintf(buf,n+1,fmt,ap);}
+    if(n<0){f->error=1;return -1;}
+    if(n>=(int)sizeof small){buf=malloc(n+1);if(!buf){f->error=1;return -1;}vsnprintf(buf,n+1,fmt,ap);}
     r=fwrite(buf,1,n,f)==(unsigned)n?n:-1;if(buf!=small)free(buf);return r;
 }
 int fprintf(FILE *f,const char *fmt,...){va_list ap;int n;va_start(ap,fmt);n=vfprintf(f,fmt,ap);va_end(ap);return n;}

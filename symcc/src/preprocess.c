@@ -28,6 +28,17 @@ static void *xmalloc(size_t n) {
     if (!p) { fprintf(stderr, "out of memory\n"); exit(1); }
     return p;
 }
+static void *xrealloc(void *old,size_t n) {
+    void *next;
+    if(!n || n>0x7fffffffu){fprintf(stderr,"expanded source too large\n");exit(1);}
+    next=realloc(old,n);
+    if(!next){fprintf(stderr,"out of memory\n");exit(1);}
+    return next;
+}
+static size_t doubled(size_t n) {
+    if(n>0x3fffffffu){fprintf(stderr,"expanded source too large\n");exit(1);}
+    return n*2;
+}
 
 static char *xstrndup(const char *s, int n) {
     char *p = (char *)xmalloc((size_t)n + 1);
@@ -347,8 +358,8 @@ static Arg *collect_args(Token *cur, int *n_out, Token **after_out) {
         } else if (tok_is(t, ",") && depth == 0) {
             args[n++] = cur_arg;
             if (n == ncap) {
-                ncap *= 2;
-                args = (Arg *)realloc(args, (size_t)ncap * sizeof(Arg));
+                ncap = doubled(ncap);
+                args = (Arg *)xrealloc(args, (size_t)ncap * sizeof(Arg));
             }
             cur_arg.head=NULL;cur_arg.tail=NULL;
             t = t->next;
@@ -371,8 +382,8 @@ static char *arg_spell(Token *arg, Token *arg_tail, int *len_out) {
         int l;
         s = tok_spell(t, &l);
         if ((size_t)n + (size_t)l + 1 > cap) {
-            while ((size_t)n + (size_t)l + 1 > cap) cap *= 2;
-            buf = (char *)realloc(buf, cap);
+            while ((size_t)n + (size_t)l + 1 > cap) cap = doubled(cap);
+            buf = (char *)xrealloc(buf, cap);
         }
         memcpy(buf + n, s, (size_t)l);
         n += l;
@@ -395,8 +406,8 @@ static Token *stringize(Token *arg, Token *arg_tail) {
         s = tok_spell(t, &l);
         for (int i = 0; i < l; i++) {
             if ((size_t)n + 3 > cap) {
-                cap *= 2;
-                buf = (char *)realloc(buf, cap);
+                cap = doubled(cap);
+                buf = (char *)xrealloc(buf, cap);
             }
             if (s[i] == '"' || s[i] == '\\')
                 buf[n++] = '\\';
@@ -980,8 +991,8 @@ static void do_define(Token *t) {
                     exit(1);
                 }
                 if (m->nparams == ncap) {
-                    ncap *= 2;
-                    m->params = (char **)realloc(m->params, (size_t)ncap * sizeof(char *));
+                    ncap = doubled(ncap);
+                    m->params = (char **)xrealloc(m->params, (size_t)ncap * sizeof(char *));
                 }
                 m->params[m->nparams++] = xstrndup(t->loc, t->len);
                 t = t->next;
@@ -1363,8 +1374,8 @@ static bool needs_space(const Token *a, const Token *b) {
 static void grow(char **buf, size_t *cap, size_t need) {
     if (need > *cap) {
         while (need > *cap)
-            *cap *= 2;
-        *buf = (char *)realloc(*buf, *cap);
+            *cap = doubled(*cap);
+        *buf = (char *)xrealloc(*buf, *cap);
     }
 }
 

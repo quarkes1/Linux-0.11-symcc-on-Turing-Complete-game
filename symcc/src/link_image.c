@@ -54,7 +54,9 @@ static void add(Image *im,const char *name,unsigned addr,int owner,int exp) {
         if(!im->syms) exit(1);
     }
     ImageSym *s=&im->syms[im->ns++];
-    s->name=malloc(strlen(name)+1); strcpy(s->name,name);
+    s->name=malloc(strlen(name)+1);
+    if(!s->name){fail(im,"out of memory allocating symbol");return;}
+    strcpy(s->name,name);
     s->addr=addr;s->owner=owner;s->exported=exp;
 }
 static unsigned resolve(Image *im,const char *name,int owner) {

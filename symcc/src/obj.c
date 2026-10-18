@@ -139,20 +139,20 @@ void obj_add_bss(Obj *o, const char *name, long size) {
 
 /* .sym 文本序列化 */
 bool obj_write(const Obj *o, FILE *out) {
-    fprintf(out, "; symcc object v1\n");
-    fprintf(out, ".text\n");
+    if(fprintf(out, "; symcc object v1\n")<0)return false;
+    if(fprintf(out, ".text\n")<0)return false;
     for (int i = 0; i < o->n_text; i++)
-        fprintf(out, "%s\n", o->text_lines[i]);
-    fprintf(out, ".data\n");
+        if(fprintf(out, "%s\n", o->text_lines[i])<0)return false;
+    if(fprintf(out, ".data\n")<0)return false;
     for (int i = 0; i < o->n_data; i++)
-        fprintf(out, "%s\n", o->data_lines[i]);
+        if(fprintf(out, "%s\n", o->data_lines[i])<0)return false;
     for (ObjBss *b = o->bss; b; b = b->next)
-        fprintf(out, ".bss %s %ld\n", b->name, b->size);
+        if(fprintf(out, ".bss %s %ld\n", b->name, b->size)<0)return false;
     for (ObjSymbol *s = o->syms; s; s = s->next)
-        fprintf(out, ".sym %s %c %s %ld %ld\n", s->name,
+        if(fprintf(out, ".sym %s %c %s %ld %ld\n", s->name,
                 s->is_data ? 'D' : 'T',
                 s->segment ? "data" : "text",
-                s->offset, s->size);
+                s->offset, s->size)<0)return false;
     return !ferror(out);
 }
 

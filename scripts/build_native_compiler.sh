@@ -11,6 +11,8 @@ for source in asm isa; do
 done
 "${cc[@]}" -c tests/native_core_probe.c -o build/native/coreprobe.sym
 symld/symld.exe --image user --crt0 user/lib/crt0.sym user/lib/syscall.sym build/native/{base,heap,stdio,format,string,convert,divsi3,tokenize,coreprobe}.sym -o build/native/coreprobe.asm --bin build/user/coreprobe.spx
+"${cc[@]}" -c tests/native_error_probe.c -o build/native/errprobe.sym
+symld/symld.exe --image user --crt0 user/lib/crt0.sym user/lib/syscall.sym build/native/{base,heap,stdio,format,string,convert,divsi3,obj,errprobe}.sym -o build/native/errprobe.asm --bin build/user/errprobe.spx
 runtime=(user/lib/syscall.sym build/native/{base,heap,stdio,format,string,convert,divsi3}.sym)
 for stage in cpp cc1 ld; do
     "${cc[@]}" -c "user/native/${stage}_main.c" -o "build/native/${stage}_main.sym"

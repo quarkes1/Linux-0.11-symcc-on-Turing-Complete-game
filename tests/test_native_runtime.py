@@ -3,6 +3,10 @@ sys.path.insert(0,str(pathlib.Path(__file__).resolve().parent))
 import test_emu_cli
 
 class NativeRuntimeTest(unittest.TestCase):
+    def test_serialization_reports_format_allocation_failure(self):
+        _,_,screen=test_emu_cli.CliTest().file_session('errprobe\n')
+        self.assertIn(b'FORMAT ERROR PASS',screen)
+
     def test_native_core_integer_bounds_and_escaped_strings(self):
         mod,disk,screen=test_emu_cli.CliTest().file_session(
             'coreprobe\ncoreprobe decimal && echo bad>/tmp/bad || echo decimal>/tmp/dec\n'

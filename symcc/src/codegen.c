@@ -730,6 +730,7 @@ static void gen_stmt(Node *n) {
         for (Node *c = n->rhs; c; c = c->next) {
             if (c->kind == ND_DEFAULT) {
                 Ldef = (char *)malloc(32);
+                if(!Ldef){fprintf(stderr,"out of memory\n");exit(1);}
                 snprintf(Ldef, 32, "Lg%d", c->num);
                 continue;
             }
