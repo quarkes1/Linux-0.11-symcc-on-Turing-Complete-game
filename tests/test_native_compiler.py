@@ -2,6 +2,28 @@ import pathlib,sys,struct,unittest,re,json,tempfile,subprocess
 sys.path.insert(0,str(pathlib.Path(__file__).resolve().parent))
 import test_emu_cli
 class NativeCompilerTest(unittest.TestCase):
+    def test_aggregate_bss_and_stack_overflow_preserve_output(self):
+        mod,disk,screen=test_emu_cli.CliTest().file_session(
+            'cd /tmp\ncat /bin/echo>keep\ncat /bin/echo>before\n'
+            'cat >big.c <<E\nchar a[2147483647];char b[2147483647];int main(void){return 0;}\nE\n'
+            'symcc big.c -o keep && echo bss>ran || echo bss>errors\n'
+            'cat >big.c <<E\nint main(void){char a[2147483647];char b[2147483647];return 0;}\nE\n'
+            'symcc big.c -o keep && echo stack>ran || echo stack>>errors\n'
+            'cat >big.c <<E\nstruct S {char a[2147483647];char b[2147483647];};struct S s;int main(void){return 0;}\nE\n'
+            'symcc big.c -o keep && echo struct>ran || echo struct>>errors\n',max_instructions=40000000000)
+        self.assertEqual(mod.read_file(disk,'/tmp/keep'),mod.read_file(disk,'/tmp/before'))
+        self.assertEqual(mod.read_file(disk,'/tmp/errors'),b'bss\nstack\nstruct\n')
+        with self.assertRaises(FileNotFoundError):mod.read_file(disk,'/tmp/ran')
+
+    def test_unsigned_constants_and_preprocessor_keep_32_bit_semantics(self):
+        mod,disk,screen=test_emu_cli.CliTest().file_session(
+            'cd /tmp\ncat >const.c <<E\n#include <stdio.h>\n'
+            '#if !(0xffffffffu>0 && (0xffffffffu>>31)==1 && !(-1<1u))\n#error unsigned condition\n#endif\n'
+            'unsigned a=0xffffffffu>>1;unsigned b=0xffffffffu/3u;int c=-1<1u;\n'
+            'int main(void){printf("CONST %u %u %d\\n",a,b,c);return 0;}\nE\n'
+            'symcc const.c -o const && ./const\n',max_instructions=20000000000)
+        self.assertIn(b'CONST 2147483647 1431655765 0',screen)
+
     def test_full_disk_does_not_publish_partial_executable(self):
         import importlib.util
         root=test_emu_cli.ROOT

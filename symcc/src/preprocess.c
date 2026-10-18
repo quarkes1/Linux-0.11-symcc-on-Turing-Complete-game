@@ -19,6 +19,7 @@
 #include <string.h>
 
 #include "symcc.h"
+#include "const_int.h"
 
 /* ---------- 小工具 ---------- */
 
@@ -570,11 +571,11 @@ static CcInt eval_primary(Eval *c) {
     Token *t = c->cur;
     if (t->kind == TK_NUM) {
         c->cur = t->next;
-        return t->val;
+        cc_eval_unsigned=t->is_unsigned;return t->val;
     }
     if (t->kind == TK_IDENT || t->kind == TK_KEYWORD) {
         c->cur = t->next;      /* 未定义标识符 = 0 */
-        return 0;
+        cc_eval_unsigned=0;return 0;
     }
     if (tok_is(t, "(")) {
         c->cur = t->next;
@@ -601,126 +602,111 @@ static CcInt eval_unary(Eval *c) {
     }
     if (tok_is(c->cur, "!")) {
         c->cur = c->cur->next;
-        return !eval_unary(c);
+        CcInt value=eval_unary(c);cc_eval_unsigned=0;return !value;
     }
     return eval_primary(c);
 }
 
 static CcInt eval_mul(Eval *c) {
-    CcInt v = eval_unary(c);
-    while (!at_end(c) &&
-           (tok_is(c->cur, "*") || tok_is(c->cur, "/") || tok_is(c->cur, "%"))) {
-        bool d = tok_is(c->cur, "/");
-        bool m = tok_is(c->cur, "%");
-        c->cur = c->cur->next;
-        CcInt r = eval_unary(c);
-        if (d)
-            v = r ? v / r : 0;            /* 除零 → 0（C 标准未定义，取 0） */
-        else if (m)
-            v = r ? v % r : 0;
-        else
-            v = v * r;
+    CcInt value=eval_unary(c);int uns=cc_eval_unsigned;
+    while(!at_end(c) && (tok_is(c->cur,"*") || tok_is(c->cur,"/") || tok_is(c->cur,"%"))) {
+        Token *op=c->cur;c->cur=op->next;
+        CcInt right=eval_unary(c);
+        value=cc_binary(value,uns,right,cc_eval_unsigned,op);uns=cc_eval_unsigned;
     }
-    return v;
+    return value;
 }
 
 static CcInt eval_add(Eval *c) {
-    CcInt v = eval_mul(c);
-    while (!at_end(c) && (tok_is(c->cur, "+") || tok_is(c->cur, "-"))) {
-        bool is_add = tok_is(c->cur, "+");
-        c->cur = c->cur->next;
-        CcInt r = eval_mul(c);
-        v = is_add ? v + r : v - r;
+    CcInt value=eval_mul(c);int uns=cc_eval_unsigned;
+    while(!at_end(c) && (tok_is(c->cur,"+") || tok_is(c->cur,"-"))) {
+        Token *op=c->cur;c->cur=op->next;
+        CcInt right=eval_mul(c);
+        value=cc_binary(value,uns,right,cc_eval_unsigned,op);uns=cc_eval_unsigned;
     }
-    return v;
+    return value;
 }
 
 static CcInt eval_shift(Eval *c) {
-    CcInt v = eval_add(c);
-    while (!at_end(c) && (tok_is(c->cur, "<<") || tok_is(c->cur, ">>"))) {
-        bool is_shl = tok_is(c->cur, "<<");
-        c->cur = c->cur->next;
-        CcInt r = eval_add(c);
-        v = is_shl ? v << (r & 63) : v >> (r & 63);
+    CcInt value=eval_add(c);int uns=cc_eval_unsigned;
+    while(!at_end(c) && (tok_is(c->cur,"<<") || tok_is(c->cur,">>"))) {
+        Token *op=c->cur;c->cur=op->next;
+        CcInt right=eval_add(c);
+        value=cc_binary(value,uns,right,cc_eval_unsigned,op);uns=cc_eval_unsigned;
     }
-    return v;
+    return value;
 }
 
 static CcInt eval_rel(Eval *c) {
-    CcInt v = eval_shift(c);
-    while (!at_end(c) &&
-           (tok_is(c->cur, "<") || tok_is(c->cur, "<=") ||
-            tok_is(c->cur, ">") || tok_is(c->cur, ">="))) {
-        bool lt = tok_is(c->cur, "<");
-        bool le = tok_is(c->cur, "<=");
-        bool gt = tok_is(c->cur, ">");
-        c->cur = c->cur->next;
-        CcInt r = eval_shift(c);
-        if (lt) v = v < r;
-        else if (le) v = v <= r;
-        else if (gt) v = v > r;
-        else v = v >= r;
+    CcInt value=eval_shift(c);int uns=cc_eval_unsigned;
+    while(!at_end(c) && (tok_is(c->cur,"<") || tok_is(c->cur,"<=") || tok_is(c->cur,">") || tok_is(c->cur,">="))) {
+        Token *op=c->cur;c->cur=op->next;
+        CcInt right=eval_shift(c);
+        value=cc_binary(value,uns,right,cc_eval_unsigned,op);uns=cc_eval_unsigned;
     }
-    return v;
+    return value;
 }
 
 static CcInt eval_eq(Eval *c) {
-    CcInt v = eval_rel(c);
-    while (!at_end(c) && (tok_is(c->cur, "==") || tok_is(c->cur, "!="))) {
-        bool is_eq = tok_is(c->cur, "==");
-        c->cur = c->cur->next;
-        CcInt r = eval_rel(c);
-        v = is_eq ? (v == r) : (v != r);
+    CcInt value=eval_rel(c);int uns=cc_eval_unsigned;
+    while(!at_end(c) && (tok_is(c->cur,"==") || tok_is(c->cur,"!="))) {
+        Token *op=c->cur;c->cur=op->next;
+        CcInt right=eval_rel(c);
+        value=cc_binary(value,uns,right,cc_eval_unsigned,op);uns=cc_eval_unsigned;
     }
-    return v;
+    return value;
 }
 
 static CcInt eval_bitand(Eval *c) {
-    CcInt v = eval_eq(c);
-    while (!at_end(c) && tok_is(c->cur, "&")) {
-        c->cur = c->cur->next;
-        v &= eval_eq(c);
+    CcInt value=eval_eq(c);int uns=cc_eval_unsigned;
+    while(!at_end(c) && (tok_is(c->cur,"&"))) {
+        Token *op=c->cur;c->cur=op->next;
+        CcInt right=eval_eq(c);
+        value=cc_binary(value,uns,right,cc_eval_unsigned,op);uns=cc_eval_unsigned;
     }
-    return v;
+    return value;
 }
 
 static CcInt eval_bitxor(Eval *c) {
-    CcInt v = eval_bitand(c);
-    while (!at_end(c) && tok_is(c->cur, "^")) {
-        c->cur = c->cur->next;
-        v ^= eval_bitand(c);
+    CcInt value=eval_bitand(c);int uns=cc_eval_unsigned;
+    while(!at_end(c) && (tok_is(c->cur,"^"))) {
+        Token *op=c->cur;c->cur=op->next;
+        CcInt right=eval_bitand(c);
+        value=cc_binary(value,uns,right,cc_eval_unsigned,op);uns=cc_eval_unsigned;
     }
-    return v;
+    return value;
 }
 
 static CcInt eval_bitor(Eval *c) {
-    CcInt v = eval_bitxor(c);
-    while (!at_end(c) && tok_is(c->cur, "|")) {
-        c->cur = c->cur->next;
-        v |= eval_bitxor(c);
+    CcInt value=eval_bitxor(c);int uns=cc_eval_unsigned;
+    while(!at_end(c) && (tok_is(c->cur,"|"))) {
+        Token *op=c->cur;c->cur=op->next;
+        CcInt right=eval_bitxor(c);
+        value=cc_binary(value,uns,right,cc_eval_unsigned,op);uns=cc_eval_unsigned;
     }
-    return v;
+    return value;
 }
 
 static CcInt eval_and(Eval *c) {
-    CcInt v = eval_bitor(c);
-    while (!at_end(c) && tok_is(c->cur, "&&")) {
-        c->cur = c->cur->next;
-        CcInt r = eval_bitor(c);
-        v = v && r;      /* 两侧全算；除零→0，结果与短路一致 */
+    CcInt value=eval_bitor(c);int uns=cc_eval_unsigned;
+    while(!at_end(c) && (tok_is(c->cur,"&&"))) {
+        Token *op=c->cur;c->cur=op->next;
+        CcInt right=eval_bitor(c);
+        value=cc_binary(value,uns,right,cc_eval_unsigned,op);uns=cc_eval_unsigned;
     }
-    return v;
+    return value;
 }
 
 static CcInt eval_or(Eval *c) {
-    CcInt v = eval_and(c);
-    while (!at_end(c) && tok_is(c->cur, "||")) {
-        c->cur = c->cur->next;
-        CcInt r = eval_and(c);
-        v = v || r;
+    CcInt value=eval_and(c);int uns=cc_eval_unsigned;
+    while(!at_end(c) && (tok_is(c->cur,"||"))) {
+        Token *op=c->cur;c->cur=op->next;
+        CcInt right=eval_and(c);
+        value=cc_binary(value,uns,right,cc_eval_unsigned,op);uns=cc_eval_unsigned;
     }
-    return v;
+    return value;
 }
+
 
 /* ---------- 跳过模式（?: 的未取分支用） ----------
  * 只按运算符优先级/括号结构消费 token，不计算、不报解析错误：

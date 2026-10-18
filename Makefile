@@ -7,7 +7,7 @@ CFLAGS := -O0 -g -Wall -Wextra -I.
 
 EMU_SRC := emu/isa.c emu/asm.c emu/emu.c
 EMU_HDR := emu/isa.h emu/asm.h emu/emu.h
-PLATFORM_HDR := runtime/platform.h symcc/include/config.h symcc/src/obj.h symcc/src/link.h symcc/src/symcc.h
+PLATFORM_HDR := runtime/platform.h runtime/compiler_int.h symcc/include/config.h symcc/src/obj.h symcc/src/link.h symcc/src/symcc.h symcc/src/const_int.h
 SYMCC_SRC := symcc/src/main.c symcc/src/tokenize.c symcc/src/parse.c symcc/src/codegen.c symcc/src/compile.c symcc/src/preprocess.c symcc/src/obj.c symcc/src/link.c symcc/src/link_image.c
 SYMCC_LIB := symcc/src/tokenize.c symcc/src/parse.c symcc/src/codegen.c symcc/src/compile.c symcc/src/preprocess.c symcc/src/obj.c symcc/src/link.c symcc/src/link_image.c
 

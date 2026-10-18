@@ -44,6 +44,16 @@ int main(void) {
     assert(h[0]=='S' && h[1]=='P' && h[2]=='X' && h[3]=='1');
     assert(h[28]==0x31 && h[29]==0x10 && h[30]==0 && h[31]==42);
     fclose(f); obj_free(o);
+    for(int kind=0;kind<3;kind++) {
+        o=obj_new();objs[0]=o;f=tmpfile();
+        obj_add_text(o,"_start:");obj_add_text(o,"    ret");
+        obj_add_symbol(o,"_start",false,0,0,0);
+        obj_add_bss(o,"huge",kind==0?-1:0x7fffffffL);
+        if(kind==2)obj_add_bss(o,"wrap",0x7fffffffL);
+        assert(!symld_link_ex(objs,1,NULL,&opt,NULL,f,&err));
+        assert(ftell(f)==0);
+        fclose(f);obj_free(o);
+    }
     high_program();
     return 0;
 }

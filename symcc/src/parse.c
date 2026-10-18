@@ -33,6 +33,7 @@
 #include <string.h>
 
 #include "symcc.h"
+#include "const_int.h"
 
 static Token *tok;
 
@@ -160,6 +161,15 @@ static void error_at(Token *t, const char *msg) {
     fprintf(stderr,"near: %.80s\n",t->loc);
     exit(1);
 }
+static int checked_layout(int pos,int bytes,int align) {
+    unsigned start;
+    if(pos<0 || bytes<0 || (unsigned)pos>0x7fffffffu-(align-1))goto bad;
+    start=((unsigned)pos+align-1)&~(unsigned)(align-1);
+    if((unsigned)bytes>0x7fffffffu-start)goto bad;
+    return start+bytes;
+bad:
+    fprintf(stderr,"aggregate/frame size out of range\n");exit(1);
+}
 
 static Token *skip(const char *s) {
     if (!tok_is(tok, s))
@@ -217,7 +227,7 @@ static Node *clone_node(Node *n) {
 /* 隐藏临时局部变量（后缀 ++/--、switch 条件）：分配 4 字节帧槽，
  * 返回 ND_VAR 节点（ty 由调用方设置） */
 static Node *hidden_lvar(Type *ty) {
-    locals_bytes += 4;
+    locals_bytes=checked_layout(locals_bytes,4,4);
     Node *v = new_node(ND_VAR, NULL);
     v->offset = -locals_bytes;
     v->ty = ty;
@@ -399,147 +409,115 @@ static CcInt eval_ternary(Token **cur) {
     CcInt c = eval_logor(cur);
     if (tok_is(*cur, "?")) {
         *cur = (*cur)->next;
-        CcInt a = eval_ternary(cur);
+        CcInt a = eval_ternary(cur);int ua=cc_eval_unsigned;
         if (!tok_is(*cur, ":"))
             error_at(*cur, "expected ':' in conditional expression");
         *cur = (*cur)->next;
         CcInt b = eval_ternary(cur);
-        return c ? a : b;
+        cc_eval_unsigned=ua||cc_eval_unsigned;
+        return cc_eval_unsigned?(CcInt)(uint32_t)(c?a:b):(c?a:b);
     }
     return c;
 }
 
 static CcInt eval_logor(Token **cur) {
-    CcInt a = eval_logand(cur);
-    while (tok_is(*cur, "||")) {
-        *cur = (*cur)->next;
-        CcInt b = eval_logand(cur);
-        a = (a != 0) || (b != 0);
+    CcInt value=eval_logand(cur);int uns=cc_eval_unsigned;
+    while(tok_is(*cur,"||")) {
+        Token *op=*cur;*cur=op->next;
+        CcInt right=eval_logand(cur);
+        value=cc_binary(value,uns,right,cc_eval_unsigned,op);uns=cc_eval_unsigned;
     }
-    return a;
+    return value;
 }
 
 static CcInt eval_logand(Token **cur) {
-    CcInt a = eval_bitor(cur);
-    while (tok_is(*cur, "&&")) {
-        *cur = (*cur)->next;
-        CcInt b = eval_bitor(cur);
-        a = (a != 0) && (b != 0);
+    CcInt value=eval_bitor(cur);int uns=cc_eval_unsigned;
+    while(tok_is(*cur,"&&")) {
+        Token *op=*cur;*cur=op->next;
+        CcInt right=eval_bitor(cur);
+        value=cc_binary(value,uns,right,cc_eval_unsigned,op);uns=cc_eval_unsigned;
     }
-    return a;
+    return value;
 }
 
 static CcInt eval_bitor(Token **cur) {
-    CcInt a = eval_bitxor(cur);
-    while (tok_is(*cur, "|")) {
-        *cur = (*cur)->next;
-        a |= eval_bitxor(cur);
+    CcInt value=eval_bitxor(cur);int uns=cc_eval_unsigned;
+    while(tok_is(*cur,"|")) {
+        Token *op=*cur;*cur=op->next;
+        CcInt right=eval_bitxor(cur);
+        value=cc_binary(value,uns,right,cc_eval_unsigned,op);uns=cc_eval_unsigned;
     }
-    return a;
+    return value;
 }
 
 static CcInt eval_bitxor(Token **cur) {
-    CcInt a = eval_bitand(cur);
-    while (tok_is(*cur, "^")) {
-        *cur = (*cur)->next;
-        a ^= eval_bitand(cur);
+    CcInt value=eval_bitand(cur);int uns=cc_eval_unsigned;
+    while(tok_is(*cur,"^")) {
+        Token *op=*cur;*cur=op->next;
+        CcInt right=eval_bitand(cur);
+        value=cc_binary(value,uns,right,cc_eval_unsigned,op);uns=cc_eval_unsigned;
     }
-    return a;
+    return value;
 }
 
 static CcInt eval_bitand(Token **cur) {
-    CcInt a = eval_equality(cur);
-    while (tok_is(*cur, "&")) {
-        *cur = (*cur)->next;
-        a &= eval_equality(cur);
+    CcInt value=eval_equality(cur);int uns=cc_eval_unsigned;
+    while(tok_is(*cur,"&")) {
+        Token *op=*cur;*cur=op->next;
+        CcInt right=eval_equality(cur);
+        value=cc_binary(value,uns,right,cc_eval_unsigned,op);uns=cc_eval_unsigned;
     }
-    return a;
+    return value;
 }
 
 static CcInt eval_equality(Token **cur) {
-    CcInt a = eval_rel(cur);
-    for (;;) {
-        if (tok_is(*cur, "==")) {
-            *cur = (*cur)->next;
-            a = (a == eval_rel(cur));
-        } else if (tok_is(*cur, "!=")) {
-            *cur = (*cur)->next;
-            a = (a != eval_rel(cur));
-        } else {
-            return a;
-        }
+    CcInt value=eval_rel(cur);int uns=cc_eval_unsigned;
+    while(tok_is(*cur,"==") || tok_is(*cur,"!=")) {
+        Token *op=*cur;*cur=op->next;
+        CcInt right=eval_rel(cur);
+        value=cc_binary(value,uns,right,cc_eval_unsigned,op);uns=cc_eval_unsigned;
     }
+    return value;
 }
 
 static CcInt eval_rel(Token **cur) {
-    CcInt a = eval_shift(cur);
-    for (;;) {
-        if (tok_is(*cur, "<")) {
-            *cur = (*cur)->next;
-            a = (a < eval_shift(cur));
-        } else if (tok_is(*cur, "<=")) {
-            *cur = (*cur)->next;
-            a = (a <= eval_shift(cur));
-        } else if (tok_is(*cur, ">")) {
-            *cur = (*cur)->next;
-            a = (a > eval_shift(cur));
-        } else if (tok_is(*cur, ">=")) {
-            *cur = (*cur)->next;
-            a = (a >= eval_shift(cur));
-        } else {
-            return a;
-        }
+    CcInt value=eval_shift(cur);int uns=cc_eval_unsigned;
+    while(tok_is(*cur,"<") || tok_is(*cur,"<=") || tok_is(*cur,">") || tok_is(*cur,">=")) {
+        Token *op=*cur;*cur=op->next;
+        CcInt right=eval_shift(cur);
+        value=cc_binary(value,uns,right,cc_eval_unsigned,op);uns=cc_eval_unsigned;
     }
+    return value;
 }
 
 static CcInt eval_shift(Token **cur) {
-    CcInt a = eval_add(cur);
-    for (;;) {
-        if (tok_is(*cur, "<<")) {
-            *cur = (*cur)->next;
-            a = (a << eval_add(cur));
-        } else if (tok_is(*cur, ">>")) {
-            *cur = (*cur)->next;
-            a = (a >> eval_add(cur));
-        } else {
-            return a;
-        }
+    CcInt value=eval_add(cur);int uns=cc_eval_unsigned;
+    while(tok_is(*cur,"<<") || tok_is(*cur,">>")) {
+        Token *op=*cur;*cur=op->next;
+        CcInt right=eval_add(cur);
+        value=cc_binary(value,uns,right,cc_eval_unsigned,op);uns=cc_eval_unsigned;
     }
+    return value;
 }
 
 static CcInt eval_add(Token **cur) {
-    CcInt a = eval_mul(cur);
-    for (;;) {
-        if (tok_is(*cur, "+")) {
-            *cur = (*cur)->next;
-            a += eval_mul(cur);
-        } else if (tok_is(*cur, "-")) {
-            *cur = (*cur)->next;
-            a -= eval_mul(cur);
-        } else {
-            return a;
-        }
+    CcInt value=eval_mul(cur);int uns=cc_eval_unsigned;
+    while(tok_is(*cur,"+") || tok_is(*cur,"-")) {
+        Token *op=*cur;*cur=op->next;
+        CcInt right=eval_mul(cur);
+        value=cc_binary(value,uns,right,cc_eval_unsigned,op);uns=cc_eval_unsigned;
     }
+    return value;
 }
 
 static CcInt eval_mul(Token **cur) {
-    CcInt a = eval_unary(cur);
-    for (;;) {
-        if (tok_is(*cur, "*")) {
-            *cur = (*cur)->next;
-            a *= eval_unary(cur);
-        } else if (tok_is(*cur, "/")) {
-            *cur = (*cur)->next;
-            CcInt b = eval_unary(cur);
-            a = b ? a / b : 0;
-        } else if (tok_is(*cur, "%")) {
-            *cur = (*cur)->next;
-            CcInt b = eval_unary(cur);
-            a = b ? a % b : 0;
-        } else {
-            return a;
-        }
+    CcInt value=eval_unary(cur);int uns=cc_eval_unsigned;
+    while(tok_is(*cur,"*") || tok_is(*cur,"/") || tok_is(*cur,"%")) {
+        Token *op=*cur;*cur=op->next;
+        CcInt right=eval_unary(cur);
+        value=cc_binary(value,uns,right,cc_eval_unsigned,op);uns=cc_eval_unsigned;
     }
+    return value;
 }
 
 static CcInt eval_unary(Token **cur) {
@@ -554,7 +532,7 @@ static CcInt eval_unary(Token **cur) {
     }
     if (tok_is(t, "!")) {
         *cur = t->next;
-        return !eval_unary(cur);
+        CcInt v=eval_unary(cur);cc_eval_unsigned=0;return !v;
     }
     if (tok_is(t, "~")) {
         *cur = t->next;
@@ -576,7 +554,7 @@ static CcInt eval_unary(Token **cur) {
             if (!tok_is(*cur, ")"))
                 error_at(*cur, "expected ')' in sizeof");
             *cur = (*cur)->next;
-            return ty->size;
+            cc_eval_unsigned=1;return ty->size;
         }
         /* sizeof 表达式：不求值，只取类型（解析会建节点，无副作用） */
         Token *save = tok;
@@ -584,7 +562,7 @@ static CcInt eval_unary(Token **cur) {
         Node *e = unary();
         *cur = tok;
         tok = save;
-        return e->ty->size;
+        cc_eval_unsigned=1;return e->ty->size;
     }
     /* 类型转换：(type) unary —— 常量求值只取值（如 `(void *) 0` 初始化器） */
     if (tok_is(t, "(") && is_declspec_start(t->next)) {
@@ -592,13 +570,18 @@ static CcInt eval_unary(Token **cur) {
         tok = t->next;
         Type *bt = declspec();
         Token *nm = NULL;
-        declarator(bt, &nm);   /* abstract 声明符（名字可省略） */
+        Type *cast_ty=declarator(bt, &nm);   /* abstract 声明符（名字可省略） */
         *cur = tok;
         tok = save;
         if (!tok_is(*cur, ")"))
             error_at(*cur, "expected ')' in cast");
         *cur = (*cur)->next;
-        return eval_unary(cur);
+        CcInt value=eval_unary(cur);
+        cc_eval_unsigned=cast_ty->is_unsigned || cast_ty->kind==TY_PTR;
+        if(cast_ty->size==1)value=cc_eval_unsigned?(unsigned char)value:(signed char)value;
+        else if(cast_ty->size==2)value=cc_eval_unsigned?(unsigned short)value:(short)value;
+        else value=cc_eval_unsigned?(CcInt)(uint32_t)value:(CcInt)(int32_t)value;
+        return value;
     }
     return eval_primary(cur);
 }
@@ -607,7 +590,7 @@ static CcInt eval_primary(Token **cur) {
     Token *t = *cur;
     if (t->kind == TK_NUM) {
         *cur = t->next;
-        return t->val;
+        cc_eval_unsigned=t->is_unsigned;return t->val;
     }
     if (tok_is(t, "(")) {
         *cur = t->next;
@@ -621,7 +604,7 @@ static CcInt eval_primary(Token **cur) {
         EnumConst *e = find_enum(t);
         if (e) {
             *cur = t->next;
-            return e->val;
+            cc_eval_unsigned=0;return e->val;
         }
         error_at(t, "undefined identifier in constant expression");
     }
@@ -972,6 +955,7 @@ static void struct_members(Type *ty) {
         if (tok_is(tok, ":")) {
             tok = tok->next;
             int width = (int)eval_const(&tok, tok);
+            if(width<0 || width>32)error_at(tok,"bit-field width out of range");
             if (width == 0) {
                 /* :0 强制对齐下一单元 */
                 in_bf = false;
@@ -979,8 +963,8 @@ static void struct_members(Type *ty) {
             } else {
                 if (!in_bf || bitpos + width > 32) {
                     if (in_bf)
-                        off += 4;      /* 越过旧位域单元 */
-                    off = (off + 3) & ~3;
+                    off=checked_layout(off,4,1); /* 越过旧位域单元 */
+                    off=checked_layout(off,0,4);
                     bitpos = 0;
                     in_bf = true;
                 }
@@ -998,6 +982,7 @@ static void struct_members(Type *ty) {
             if (tok_is(tok, ":")) {
                 tok = tok->next;
                 width = (int)eval_const(&tok, tok);
+                if(width<0 || width>32)error_at(tok,"bit-field width out of range");
             }
             if (!name)
                 error_at(tok, "member name missing");
@@ -1023,8 +1008,8 @@ static void struct_members(Type *ty) {
                     error_at(name, "bit-field width exceeds 32");
                 if (!in_bf || bitpos + width > 32) {
                     if (in_bf)
-                        off += 4;          /* 越过旧位域单元 */
-                    off = (off + 3) & ~3;
+                        off=checked_layout(off,4,1); /* 越过旧位域单元 */
+                    off=checked_layout(off,0,4);
                     bitpos = 0;
                     in_bf = true;
                 }
@@ -1036,16 +1021,16 @@ static void struct_members(Type *ty) {
                  * 非位域/新单元越过（off += 4）。 */
             } else {
                 if (in_bf) {
-                    off += 4;              /* 越过位域单元 */
+                    off=checked_layout(off,4,1); /* 越过位域单元 */
                     in_bf = false;
                 }
                 /* Natural scalar alignment is required by MINIX disk records. */
                 Type *element = mty;
                 while (element->kind == TY_ARRAY) element = element->base;
                 int align = element->kind == TY_CHAR ? 1 : element->kind == TY_SHORT ? 2 : 4;
-                off = (off + align - 1) & ~(align - 1);
+                off=checked_layout(off,0,align);
                 m->offset = off;
-                off += mty->size;
+                off=checked_layout(off,mty->size,1);
             }
             cur = cur->next = m;
         member_done:
@@ -1059,9 +1044,9 @@ static void struct_members(Type *ty) {
     }
     /* 循环在 "}" 处退出，不消费（调用方 struct_decl skip） */
     if (in_bf)
-        off += 4;                  /* 尾部位域单元占 4 字节 */
+        off=checked_layout(off,4,1); /* 尾部位域单元占 4 字节 */
     ty->members = head.next;
-    ty->size = (off + 3) & ~3;   /* 4 对齐总大小 */
+    ty->size=checked_layout(off,0,4);
     if (ty->size == 0)
         error_at(tok, "empty struct/union not supported");
 }
@@ -2032,7 +2017,7 @@ static Node *decl_stmt(void) {
             target = g;
         } else {
             /* 局部变量：栈槽按 align4(size) 分配 */
-            locals_bytes += (ty->size + 3) & ~3;
+            locals_bytes=checked_layout(locals_bytes,checked_layout(ty->size,0,4),4);
             Var *v = (Var *)calloc(1, sizeof(Var));
             if (!v) { fprintf(stderr, "out of memory\n"); exit(1); }
             v->name = name->loc;
@@ -2401,7 +2386,7 @@ static Func *funcdef(Type *fty, Token *t, bool is_static) {
             f->param_names[i] = fty->param_names[i];
         /* 建参数 Var */
         for (int i = 0; i < fty->nargs; i++) {
-            locals_bytes += (int)(((size_t)fty->param_tys[i]->size + 3) & ~3);
+            locals_bytes=checked_layout(locals_bytes,checked_layout(fty->param_tys[i]->size,0,4),4);
             Var *v = (Var *)calloc(1, sizeof(Var));
             if (!v) { fprintf(stderr, "out of memory\n"); exit(1); }
             v->name = fty->param_names[i];
@@ -2417,7 +2402,7 @@ static Func *funcdef(Type *fty, Token *t, bool is_static) {
             f->param_names[i] = fty->param_names[i];
             if (!f->param_names[i])
                 error_at(t, "parameter name missing in function definition");
-            locals_bytes += (int)(((size_t)fty->param_tys[i]->size + 3) & ~3);
+            locals_bytes=checked_layout(locals_bytes,checked_layout(fty->param_tys[i]->size,0,4),4);
             Var *v = (Var *)calloc(1, sizeof(Var));
             if (!v) { fprintf(stderr, "out of memory\n"); exit(1); }
             v->name = f->param_names[i];

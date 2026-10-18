@@ -22,6 +22,15 @@ static void fail(Image *im,const char *fmt,...) {
     vsnprintf(im->err->msg,sizeof im->err->msg,fmt,ap);
     va_end(ap); im->failed=1;
 }
+static unsigned advance(Image *im,unsigned pos,long bytes,unsigned limit) {
+    if(bytes<0 || pos>limit || (unsigned long)bytes>limit-pos) {
+        fail(im,"image size exceeds address window");return pos;
+    }
+    return pos+(unsigned)bytes;
+}
+static unsigned align_image(Image *im,unsigned pos,unsigned limit) {
+    return advance(im,pos,(4u-(pos&3u))&3u,limit);
+}
 static void emit(Image *im,const char *fmt,...) {
     va_list ap; char text[4096]; int n;
     va_start(ap,fmt); n=vsnprintf(text,sizeof text,fmt,ap); va_end(ap);
@@ -156,6 +165,7 @@ bool symld_link_ex(Obj **objs,int n,const char *crt0,const LinkOptions *opt,FILE
     unsigned pos=base,bss,bssend,loaded;
     int ok=0;
     if(!all||!ts||!ds){fail(&im,"out of memory");goto done;}
+    if(base>=opt->limit){fail(&im,"invalid address window");goto done;}
     if(crt0) {
         FILE *f=fopen(crt0,"rb");char s[1024];
         if(!f){fail(&im,"cannot open crt0: %s",crt0);goto done;}
@@ -170,19 +180,24 @@ bool symld_link_ex(Obj **objs,int n,const char *crt0,const LinkOptions *opt,FILE
     all[0]=start;for(int i=0;i<n;i++)all[i+1]=objs[i];n++;
     for(int i=0;i<n;i++) {
         ts[i]=pos;
-        labels(&im,all[i],i,all[i]->text_lines,all[i]->n_text,pos,1);
-        for(int k=0;k<all[i]->n_text;k++)pos+=line_size(all[i]->text_lines[k]);
+        for(int k=0;k<all[i]->n_text;k++)pos=advance(&im,pos,line_size(all[i]->text_lines[k]),opt->limit);
+        if(im.failed)goto done;
+        labels(&im,all[i],i,all[i]->text_lines,all[i]->n_text,ts[i],1);
     }
     /* A real self-jump after crt0 is not needed: the crt0 source owns its stop label. */
-    pos=a4(pos);
+    pos=align_image(&im,pos,opt->limit);
     for(int i=0;i<n;i++) {
         ds[i]=pos;
-        labels(&im,all[i],i,all[i]->data_lines,all[i]->n_data,pos,0);
-        for(int k=0;k<all[i]->n_data;k++)pos+=(unsigned)obj_line_size(all[i]->data_lines[k]);
+        for(int k=0;k<all[i]->n_data;k++)pos=advance(&im,pos,obj_line_size(all[i]->data_lines[k]),opt->limit);
+        if(im.failed)goto done;
+        labels(&im,all[i],i,all[i]->data_lines,all[i]->n_data,ds[i],0);
     }
-    loaded=pos;bss=a4(pos);pos=bss;
+    loaded=pos;bss=align_image(&im,pos,opt->limit);pos=bss;
     for(int i=0;i<n;i++)for(ObjBss *b=all[i]->bss;b;b=b->next) {
-        add(&im,b->name,pos,i,exported(all[i],b->name));pos+=a4((unsigned)b->size);
+        unsigned end=advance(&im,pos,b->size,opt->limit);
+        end=align_image(&im,end,opt->limit);
+        if(im.failed)goto done;
+        add(&im,b->name,pos,i,exported(all[i],b->name));pos=end;
     }
     bssend=pos;
     add(&im,"__bss_start",bss,-1,1);add(&im,"__bss_end",bssend,-1,1);
