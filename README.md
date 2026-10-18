@@ -1,4 +1,4 @@
-# 当前交付：磁盘上的交互 shell
+# 当前交付：32 MiB 系统与原生 symcc
 
 已实现真实 `fork/exec/wait`、合作式进程切换、DiskA 块驱动、大端 MINIX 文件系统及独立用户程序。
 **模拟器端到端已验证；用户截图已确认旧版可在游戏启动并输入命令，本次更新仍需游戏复验。** 下文保留 M0–M3 的历史说明；当前默认构建以本节为准。
@@ -19,7 +19,7 @@ mingw32-make test
 ```
 
 游戏加载：RAM 的外部文件设置为 `build/kernel.bin`，DiskA 的外部文件设置为 `build/rootfs.bin`；
-两者均为 **8MB、Big endian**。屏幕需连接主 RAM，键盘连接现有 keyboard 输入。
+两者均为 **32 MiB（33554432 字节）、Big endian**。屏幕需连接主 RAM，键盘连接现有 keyboard 输入。
 启动时逐阶段打印 `[ OK ]` 内核日志，打印 Welcome 后清屏，出现 `symplus:/$ `。
 点击游戏键盘输入区域使其获得焦点，再输入命令。
 不要向游戏粘贴大型汇编源码。磁盘镜像会由构建脚本重新生成，保存游戏中修改的数据时另存副本。
@@ -49,7 +49,9 @@ sync
 exit
 ```
 
-`cd`、`pwd`、`help`、`exit` 是 shell 内建，其余列出的程序由磁盘加载；`exit` 后 PID 1 会重新启动 shell。
+`cd`、`pwd`、`help`、`exit`、`reset` 是 shell 内建，其余列出的程序由磁盘加载；`exit` 后 PID 1 会重新启动 shell。
+`reset` 清屏并保留当前目录。`&&` 在前一命令成功时执行，`||` 在失败时执行，`;` 顺序执行；三者从左到右求值。
+例如 `mkdir /tmp/demo && cd /tmp/demo; pwd`。整行先解析再执行，跳过的命令不会打开或截断重定向文件。
 提示符显示当前绝对目录，例如 `cd /etc` 后显示 `symplus:/etc$ `。
 `ls` 支持 `-a`（显示隐藏项）、`-l`（权限、链接数、UID、GID、字节数），可组合为 `-la` / `-al`，
 可指定多个路径，并用 `--` 结束参数解析。默认隐藏以点开头的条目。
@@ -66,7 +68,7 @@ exit
 自动化可用 `--input keys.txt --until "屏幕文本"` 注入按键并在匹配后停止；`--until` 可能匹配回显文字，
 断言命令执行结果应选输出专用标记。
 
-当前限制：最多 8 个用户进程（含 init 和 shell）；每个进程有 512KB 用户窗口，工具链默认保留 64KB 栈空间。
+当前限制：最多 8 个用户进程（含 init 和 shell）；每个进程有 2 MiB 用户窗口，工具链默认保留 64 KiB 栈空间。
 采用调用边界的合作式切换，无系统调用的死循环不会被抢占。无硬件内存保护。
 命令行支持退格、大小写、字面量引号、文件重定向和 heredoc；不支持管道和后台作业。
 本机游戏键码为 Backspace=`0x0D`、Enter=`0x0A`；驱动将前者处理为删除，后者提交命令，
@@ -74,6 +76,48 @@ exit
 左右 Shift 独立跟踪，支持美式键位符号映射：`Shift+,` 为 `<`，`Shift+.` 为 `>`，以及 `!@#$%^&*()_+{}|:"~?`。
 帧缓冲固定在 `0x2000`，链接器已明确避让；用户程序位于 `0x200000`，通过固定低地址网关完成长分支和系统调用。
 游戏键码、真实运行速度和持久 RAM 保存行为应在游戏验收中确认。
+
+### 在系统里编译 C
+
+`/bin/symcc` 在客户机中通过真实 fork/exec/wait 调用 `scpp`、`scc1`、`sld`，复用本项目现有编译器核心。
+标准头文件放在 `/include`，运行库对象放在 `/lib`。下面的源码由运行中的 shell 写入，随后原生编译和执行：
+
+```text
+cd /tmp
+cat > main.c <<EOF
+#include <stdio.h>
+int main(void) {
+    puts("Hello from native symcc!");
+    return 0;
+}
+EOF
+symcc main.c -o main && ./main
+sync
+reset
+```
+
+支持单个源文件、`-o`（默认 `a.out`）、`-I dir` / `-Idir`。MINIX 路径的每个名字最多 14 字节。
+`-E/-c/-S` 和其他未实现选项明确报错；可直接使用 `scpp input.c output.i [-I dir]`、
+`scc1 input.i output.sym`、`sld input.sym output.spx` 查看中间阶段。日常编译运行使用 `symcc`，由其处理执行权限和发布。
+编译成功后才原子替换输出；语法错误、缺头文件、链接错误和发布失败均保留原程序。
+SDK 提供整数/字符串/FILE/格式化输出和可复用堆；没有浮点、真正的 64 位整数或完整 POSIX/GNU 库。
+仍受当前 C 编译器能力和 2 MiB 进程窗口限制；过大的编译任务会报错，原输出保留。
+
+### 先验证游戏存储寻址
+
+```powershell
+bash scripts/build_capacity_probe.sh
+```
+
+将 RAM/DiskA 分别连接独立的 `build/capacity-probe.bin` 和 `build/capacity-disk.bin`，都设为 32 MiB。
+屏幕应同时显示 `RAM 32M PASS`、`DISK 32M PASS`；出现 `ALIAS` 表示硬件高地址存在回绕。
+探针保存并还原测试位置，使用独立测试盘。之后切回 `build/kernel.bin` 和 `build/rootfs.bin` 启动系统。
+模拟器已覆盖正常寻址和故意屏蔽高地址线的失败情况；实际游戏中的容量结果仍需人工复验。
+
+完整回归、独立审阅修正、阶段内存和镜像摘要见[本次验收记录](docs/superpowers/2026-10-17-native-symcc-verification.md)。
+
+`python scripts/package_system.py` 生成包含系统、独立探针、测试盘、加载说明和校验清单的交付 zip，
+并逐字节验证解包内容。模拟器长任务可指定 `--max-instructions N`；预算耗尽返回非零，不代表完成。
 
 原 M3 停机验收单独构建，不覆盖交互镜像：
 
