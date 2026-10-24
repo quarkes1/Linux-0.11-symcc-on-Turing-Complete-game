@@ -94,17 +94,21 @@ void obj_free(Obj *o) {
     free(o);
 }
 
-static void add_line(char ***lines, int *n, const char *line) {
-    *lines = (char **)realloc(*lines, (size_t)(*n + 1) * sizeof **lines);
-    if (!*lines) { fprintf(stderr, "out of memory\n"); exit(1); }
+static void add_line(char ***lines, int *n,int *capacity,const char *line) {
+    if(*n==*capacity) {
+        int cap=*capacity?*capacity*2:64;
+        char **next=(char **)realloc(*lines,(size_t)cap*sizeof **lines);
+        if(!next){fprintf(stderr,"out of memory\n");exit(1);}
+        *lines=next;*capacity=cap;
+    }
     (*lines)[*n] = (char *)malloc(strlen(line) + 1);
     if (!(*lines)[*n]) { fprintf(stderr, "out of memory\n"); exit(1); }
     strcpy((*lines)[*n], line);
     (*n)++;
 }
 
-void obj_add_text(Obj *o, const char *line) { add_line(&o->text_lines, &o->n_text, line); }
-void obj_add_data(Obj *o, const char *line) { add_line(&o->data_lines, &o->n_data, line); }
+void obj_add_text(Obj *o, const char *line) { add_line(&o->text_lines, &o->n_text,&o->text_capacity,line); }
+void obj_add_data(Obj *o, const char *line) { add_line(&o->data_lines, &o->n_data,&o->data_capacity,line); }
 
 void obj_add_symbol(Obj *o, const char *name, bool is_data, int segment,
                     long offset, long size) {
@@ -135,21 +139,21 @@ void obj_add_bss(Obj *o, const char *name, long size) {
 
 /* .sym 文本序列化 */
 bool obj_write(const Obj *o, FILE *out) {
-    fprintf(out, "; symcc object v1\n");
-    fprintf(out, ".text\n");
+    if(fprintf(out, "; symcc object v1\n")<0)return false;
+    if(fprintf(out, ".text\n")<0)return false;
     for (int i = 0; i < o->n_text; i++)
-        fprintf(out, "%s\n", o->text_lines[i]);
-    fprintf(out, ".data\n");
+        if(fprintf(out, "%s\n", o->text_lines[i])<0)return false;
+    if(fprintf(out, ".data\n")<0)return false;
     for (int i = 0; i < o->n_data; i++)
-        fprintf(out, "%s\n", o->data_lines[i]);
+        if(fprintf(out, "%s\n", o->data_lines[i])<0)return false;
     for (ObjBss *b = o->bss; b; b = b->next)
-        fprintf(out, ".bss %s %ld\n", b->name, b->size);
+        if(fprintf(out, ".bss %s %ld\n", b->name, b->size)<0)return false;
     for (ObjSymbol *s = o->syms; s; s = s->next)
-        fprintf(out, ".sym %s %c %s %ld %ld\n", s->name,
+        if(fprintf(out, ".sym %s %c %s %ld %ld\n", s->name,
                 s->is_data ? 'D' : 'T',
                 s->segment ? "data" : "text",
-                s->offset, s->size);
-    return true;
+                s->offset, s->size)<0)return false;
+    return !ferror(out);
 }
 
 /* 反序列化：逐行读取（动态缓冲），识别 .text/.data/.bss/.sym 头行，
@@ -172,9 +176,17 @@ bool obj_read(Obj *o, FILE *in) {
         }
         if (len == 0) break;   /* EOF */
         line[len] = 0;
+#ifdef SP_NATIVE
+        /* Comments carry no relocation information. Keep quoted data intact. */
+        if(line[0]!='"') {
+            char *comment=strchr(line,';');if(comment)*comment=0;
+            len=strlen(line);
+            while(len && (line[len-1]==' ' || line[len-1]=='\t'))line[--len]=0;
+        }
+#endif
         /* 去行尾换行 */
-        if (len > 0 && line[len - 1] == '\n')
-            line[len - 1] = 0;
+        while (len > 0 && (line[len - 1] == '\n' || line[len - 1] == '\r'))
+            line[--len] = 0;
         if (line[0] == ';' || line[0] == 0)
             continue;
         if (strcmp(line, ".text") == 0) { section = 1; continue; }
@@ -201,5 +213,5 @@ bool obj_read(Obj *o, FILE *in) {
             obj_add_data(o, line);
     }
     free(line);
-    return true;
+    return !ferror(in);
 }

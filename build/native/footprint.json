@@ -3,7 +3,7 @@
     "loaded": 236849,
     "bss": 675,
     "stack_reserved": 65536,
-    "heap_peak_committed": 71760,
+    "heap_peak_committed": 71856,
     "window_bytes": 2097152,
     "within_budget": true
   },

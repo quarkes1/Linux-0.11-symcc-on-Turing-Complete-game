@@ -1,0 +1,32 @@
+.text
+_start:
+    mov r1,0
+    screen r1,0
+    mov r1,1
+    screen r1,8192
+    mov r1,2
+    mov r2,65535
+    lsl r2,r2,8
+    or r2,r2,255
+    screen r1,r2
+    mov r1,3
+    screen r1,0
+    mov sp,16
+    lsl sp,sp,16
+    call main
+    jmp 0x140
+cap_read_disk:
+    add r9,sp,4
+    load_32 r2,[r9]
+    pload r1,[r2]
+    ret
+cap_write_disk:
+    add r9,sp,4
+    load_32 r2,[r9]
+    add r9,sp,8
+    load_32 r1,[r9]
+    pstore [r2],r1
+    ret
+.sym _start T text 0 0
+.sym cap_read_disk T text 0 0
+.sym cap_write_disk T text 0 0

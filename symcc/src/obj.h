@@ -33,6 +33,7 @@ typedef struct ObjBss {
 typedef struct Obj {
     char **text_lines;  int n_text;    /* 可重定位 .text 行（不含表行） */
     char **data_lines;  int n_data;    /* .data 行 */
+    int text_capacity,data_capacity;
     ObjBss *bss;                       /* .bss 声明 */
     ObjSymbol *syms;                   /* 导出的全局符号（非 static） */
 } Obj;

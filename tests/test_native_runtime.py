@@ -1,0 +1,34 @@
+import pathlib,sys,unittest
+sys.path.insert(0,str(pathlib.Path(__file__).resolve().parent))
+import test_emu_cli
+
+class NativeRuntimeTest(unittest.TestCase):
+    def test_serialization_reports_format_allocation_failure(self):
+        _,_,screen=test_emu_cli.CliTest().file_session('errprobe\n')
+        self.assertIn(b'FORMAT ERROR PASS',screen)
+
+    def test_native_core_integer_bounds_and_escaped_strings(self):
+        mod,disk,screen=test_emu_cli.CliTest().file_session(
+            'coreprobe\ncoreprobe decimal && echo bad>/tmp/bad || echo decimal>/tmp/dec\n'
+            'coreprobe hex && echo bad>/tmp/bad || echo hex>/tmp/hex\n')
+        self.assertIn(b'CORE PASS',screen)
+        self.assertEqual(mod.read_file(disk,'/tmp/dec'),b'decimal\n')
+        self.assertEqual(mod.read_file(disk,'/tmp/hex'),b'hex\n')
+        with self.assertRaises(FileNotFoundError):mod.read_file(disk,'/tmp/bad')
+
+    def test_sdk_file_format_and_conversion(self):
+        mod,disk,screen=test_emu_cli.CliTest().file_session('sdkprobe\n')
+        self.assertIn(b'SDK PASS',screen)
+        self.assertEqual(mod.read_file(disk,'/tmp/sdk'),b'alpha\nbeta')
+
+    def test_atomic_publication_and_permissions(self):
+        mod,disk,screen=test_emu_cli.CliTest().file_session('pubtest\n')
+        self.assertIn(b'PUBLISH PASS',screen)
+        self.assertIn(b'NATIVE EXEC PASS',screen)
+        self.assertEqual(mod.read_file(disk,'/tmp/dest'),b'NEW')
+        with self.assertRaises(FileNotFoundError):mod.read_file(disk,'/tmp/source')
+
+    def test_checked_guest_break(self):
+        _,_,screen=test_emu_cli.CliTest().file_session('heaptest\n')
+        self.assertIn(b'HEAP PASS',screen)
+        self.assertNotIn(b'HEAP FAIL',screen)

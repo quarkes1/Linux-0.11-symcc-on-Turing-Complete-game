@@ -19,7 +19,7 @@
 #include <stdint.h>
 #include <stddef.h>
 
-typedef struct {
+typedef struct EmuResult {
     uint32_t regs[16];
     uint8_t *mem;           /* 主存（malloc，调用方 free） */
     size_t mem_size;
@@ -28,7 +28,25 @@ typedef struct {
     int exit_code;          /* 停机时 regs[1] */
     int error;              /* 0 正常；1 max_instr 超限；2 地址越界 */
     uint32_t settings[8];   /* 屏幕设置寄存器 */
+    uint64_t instructions;
+    int stop_reason;        /* 0 halt, 1 observer, 2 limit, 3 fault */
 } EmuResult;
+
+typedef struct { uint64_t at_instruction; uint32_t key; } EmuEvent;
+typedef struct {
+    const uint8_t *disk;
+    size_t disk_len;
+    const EmuEvent *events;
+    size_t n_events;
+    uint64_t ns_per_instruction;
+    int (*observe)(const EmuResult *, uint64_t, void *);
+    void *opaque;
+    /* Optional live FIFO source. Called only when scripted events are absent. */
+    uint32_t (*keyboard)(void *);
+    /* Optional device address-line masks; zero keeps full addressing. */
+    uint32_t ram_address_mask,disk_address_mask;
+} EmuOptions;
+EmuResult emu_run_ex(const uint8_t *, size_t, size_t, uint64_t, const EmuOptions *);
 
 /* bin 从地址 0 载入主存后开始执行。
  * ram_size = 主存字节数（2 的幂）；max_instr = 指令上限（防死循环）。 */

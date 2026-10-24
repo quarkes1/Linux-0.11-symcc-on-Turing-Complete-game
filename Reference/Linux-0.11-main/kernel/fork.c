@@ -23,6 +23,10 @@ long last_pid=0;
 
 void verify_area(void * addr,int size)
 {
+#ifdef SP_INTERACTIVE
+    /* SYMPLUS-PORT: dispatcher bounds-checks user memory; no page tables. */
+    return;
+#endif
 	unsigned long start;
 
 	start = (unsigned long) addr;

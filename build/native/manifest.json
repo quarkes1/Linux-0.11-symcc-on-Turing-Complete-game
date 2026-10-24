@@ -5,7 +5,7 @@
   },
   "rootfs.bin": {
     "bytes": 33554432,
-    "sha256": "0b0158529fccfcb6c22183a21b2914e3c247149c1d0be2d4c19d23f5df0c8763"
+    "sha256": "82f54c5c15290e47b29a0c850877257a02f8ad657e9c3da4a4e4152531b99102"
   },
   "capacity-probe.bin": {
     "bytes": 33554432,
@@ -15,28 +15,16 @@
     "bytes": 33554432,
     "sha256": "83ee47245398adee79bd9c0a8bc57b821e92aba10f5f9ade8a5d1fae4d8c4302"
   },
-  "docs/symcc-c-support.md": {
-    "bytes": 3929,
-    "sha256": "dbf015386fdb3b736d87b9b48cae8c1b5716e57ea35011702fd0e10e5f31459a"
-  },
-  "docs/superpowers/2026-10-18-symcc-performance-interrupt.md": {
-    "bytes": 5327,
-    "sha256": "f594de5f4ab22b4081e659ca8d1d8050e15030f53d35627fe25ace54d948d27d"
-  },
   "footprint.json": {
     "bytes": 549,
-    "sha256": "7b77a88aa6f566186e0ff2fc3ecd1604dd9e1c259bee419ab06bfbbd3183ef9a"
+    "sha256": "275d02fac3f72bb488fbb4715f96bb2d1c4968a7f0a302055c64bc29c7ec45f5"
   },
   "instructions.json": {
     "bytes": 732,
-    "sha256": "209c469f4326b68a427519061ae428d068a3c964c0c8c9027fe3d2a190db5144"
-  },
-  "performance.json": {
-    "bytes": 747,
-    "sha256": "cd6aedf81eb0641d8d75083d54a197c2f453e624685b6810e33f4f3fa0cc1a30"
+    "sha256": "70ca16559e45364014ba44ab7fcb274e3235239683d8a5093d1fabbccb77da62"
   },
   "README.txt": {
-    "bytes": 1536,
-    "sha256": "258279e89d5662cc36b9826be04e3d6f41949ff95f1f2906d28f5a8d277e7605"
+    "bytes": 1497,
+    "sha256": "a0291e0003d02dd051c36f798ded224a577d37941037fa6e12008fe8618ea5f9"
   }
 }

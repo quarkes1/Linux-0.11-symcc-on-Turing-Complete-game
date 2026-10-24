@@ -33,7 +33,7 @@ bool tok_is_kw(const Token *t, const char *kw) {
         && strncmp(t->loc, kw, (size_t)t->len) == 0;
 }
 
-int64_t tok_num(const Token *t) {
+CcInt tok_num(const Token *t) {
     return t->kind == TK_NUM ? t->val : 0;
 }
 
@@ -99,7 +99,7 @@ static int get_escape(const char **pp) {
     case '0': case '1': case '2': case '3':
     case '4': case '5': case '6': case '7': {
         int val = 0, n = 0;
-        while (n < 3 && *p >= '0' && *p <= '7') { val = val * 8 + (*p - '0'); p++; n++; }
+        while (n < 3 && *p >= '0' && *p <= '7') { val = cc_accumulate(val,8,*p-'0'); p++; n++; }
         *pp = p;
         return val & 0xFF;
     }
@@ -112,7 +112,7 @@ static int get_escape(const char **pp) {
             if (*p >= '0' && *p <= '9') d = *p - '0';
             else if (*p >= 'a' && *p <= 'f') d = *p - 'a' + 10;
             else d = *p - 'A' + 10;
-            val = val * 16 + d;
+            val = cc_accumulate(val,16,d);
             p++;
         }
         *pp = p;
@@ -157,7 +157,7 @@ Token *tokenize(const char *p) {
         /* 数字：十进制 / 0x 十六进制 / 0 前缀八进制 */
         if (isdigit((unsigned char)*p)) {
             char *start = (char *)p;
-            int64_t val = 0;
+            CcUInt val = 0;
             if (p[0] == '0' && (p[1] == 'x' || p[1] == 'X')) {
                 p += 2;
                 if (!isxdigit((unsigned char)*p)) {
@@ -169,27 +169,27 @@ Token *tokenize(const char *p) {
                     if (*p >= '0' && *p <= '9') d = *p - '0';
                     else if (*p >= 'a' && *p <= 'f') d = *p - 'a' + 10;
                     else d = *p - 'A' + 10;
-                    val = val * 16 + d;
+                    val = cc_accumulate(val,16,d);
                     p++;
                 }
             } else if (p[0] == '0' && p[1] >= '0' && p[1] <= '7') {
                 /* 八进制：0 前缀且下一位 0-7 */
                 p++;
                 while (*p >= '0' && *p <= '7') {
-                    val = val * 8 + (*p - '0');
+                    val = cc_accumulate(val,8,*p-'0');
                     p++;
                 }
                 if (isdigit((unsigned char)*p)) {
                     /* 后跟 8/9：非法八进制（如 08），容错按十进制重读 */
                     val = 0;
                     while (isdigit((unsigned char)*p)) {
-                        val = val * 10 + (*p - '0');
+                        val = cc_accumulate(val,10,*p-'0');
                         p++;
                     }
                 }
             } else {
                 while (isdigit((unsigned char)*p)) {
-                    val = val * 10 + (*p - '0');
+                    val = cc_accumulate(val,10,*p-'0');
                     p++;
                 }
             }
@@ -198,13 +198,16 @@ Token *tokenize(const char *p) {
             bool unsuf = false, longsuf = false;
             for (;;) {
                 if (!unsuf && (*p == 'u' || *p == 'U')) { unsuf = true; p++; }
-                else if (!longsuf && (*p == 'l' || *p == 'L')) { longsuf = true; p++; }
+                else if (!longsuf && (*p == 'l' || *p == 'L')) { longsuf = true; char c=*p++;if(*p==c)p++; }
                 else break;
             }
             if (!isalnum((unsigned char)*p) && *p != '_') {
                 Token *t = new_token(TK_NUM, start, (char *)p);
                 t->val = val;
                 t->is_unsigned = unsuf;
+#ifdef SP_NATIVE
+                if(val>0x7fffffffu)t->is_unsigned=true;
+#endif
                 t->at_bol = bol;
                 bol = false;
                 cur = cur->next = t;
@@ -260,8 +263,13 @@ Token *tokenize(const char *p) {
         /* 字符串字面量 "..."（完整 C89 转义表，展开后存入 t->str） */
         if (*p == '"') {
             char *start = (char *)p;
-            size_t cap = strcspn(p + 1, "\"") + 1;   /* 上限：源文本长度 */
+            /* Count through escaped quotes before reserving the decoded
+             * buffer; strcspn stops at the first escaped quote and underfills. */
+            const char *end=p+1;
+            while(*end && *end!='"'){if(*end=='\\' && end[1])end++;end++;}
+            size_t cap=(size_t)(end-p)+1;
             char *buf = (char *)malloc(cap);
+            if(!buf){fprintf(stderr,"out of memory\n");exit(1);}
             int blen = 0;
             p++;
             while (*p && *p != '"') {
@@ -290,7 +298,7 @@ Token *tokenize(const char *p) {
         if (*p == '\'') {
             char *start = (char *)p;
             p++;
-            int64_t val;
+            CcInt val;
             if (*p == '\\') {
                 p++;
                 val = get_escape(&p);

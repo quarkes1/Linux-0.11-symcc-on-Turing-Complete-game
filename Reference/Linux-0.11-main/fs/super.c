@@ -13,6 +13,9 @@
 #include <asm/system.h>
 
 #include <errno.h>
+#ifdef SP_INTERACTIVE
+#include <linux/symplus.h>
+#endif
 #include <sys/stat.h>
 
 int sync_dev(int dev);
@@ -20,7 +23,7 @@ void wait_for_keypress(void);
 
 /* set_bit uses setb, as gas doesn't recognize setc */
 /* SYMPLUS-PORT: bt inline asm -> pure C bit test */
-#define set_bit(bitnr,addr) (((*(volatile int *)(addr)) >> (bitnr)) & 1)
+#define set_bit(bitnr,addr) ((((unsigned char *)(addr))[(bitnr)>>3] >> ((bitnr)&7)) & 1)
 struct super_block super_block[NR_SUPER];
 /* this is initialized in init/main.c */
 int ROOT_DEV = 0;
@@ -123,10 +126,25 @@ static struct super_block * read_super(int dev)
 		free_super(s);
 		return NULL;
 	}
+#ifdef SP_INTERACTIVE
+    sp_super_decode(s,(unsigned char *)bh->b_data);
+#else
 	*((struct d_super_block *) s) =
 		*((struct d_super_block *) bh->b_data);
+#endif
 	brelse(bh);
-	if (s->s_magic != SUPER_MAGIC) {
+	/* SYMPLUS-PORT: validate bitmap coverage and metadata/data separation. */
+    if (s->s_magic != SUPER_MAGIC ||
+#ifdef SP_INTERACTIVE
+        s->s_nzones>SP_DISK_BYTES/1024 ||
+#else
+        s->s_nzones>8192 ||
+#endif
+        s->s_imap_blocks!=1 || !s->s_zmap_blocks || s->s_zmap_blocks>Z_MAP_SLOTS ||
+        !s->s_ninodes || s->s_ninodes>128 || s->s_log_zone_size!=0 ||
+        s->s_firstdatazone < 2+s->s_imap_blocks+s->s_zmap_blocks+(s->s_ninodes+31)/32 ||
+        s->s_firstdatazone>=s->s_nzones ||
+        s->s_zmap_blocks*8192 < s->s_nzones-s->s_firstdatazone+1) {
 		s->s_dev = 0;
 		free_super(s);
 		return NULL;
@@ -264,11 +282,11 @@ void mount_root(void)
 	current->pwd = mi;
 	current->root = mi;
 	free=0;
-	i=p->s_nzones;
-	while (-- i >= 0)
+	i=p->s_nzones-p->s_firstdatazone+1;
+	while (-- i > 0)
 		if (!set_bit(i&8191,p->s_zmap[i>>13]->b_data))
 			free++;
-	printk("%d/%d free blocks\n\r",free,p->s_nzones);
+	printk("%d/%d free blocks\n\r",free,p->s_nzones-p->s_firstdatazone);
 	free=0;
 	i=p->s_ninodes+1;
 	while (-- i >= 0)

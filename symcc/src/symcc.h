@@ -12,6 +12,8 @@
 #include <stdint.h>
 #include <stdio.h>
 
+#include <stdlib.h>
+#include "runtime/compiler_int.h"
 #include "obj.h"
 
 /* ---------- 词法 ---------- */
@@ -28,7 +30,7 @@ enum {
 typedef struct Token {
     struct Token *next;
     int kind;
-    int64_t val;     /* TK_NUM 的值 */
+    CcInt val;     /* TK_NUM 的值 */
     char *loc;       /* 源码位置（不含空白的首个字符） */
     int len;         /* 长度 */
     char *str;       /* TK_STR：展开后的字节（malloc，无 NUL 结尾） */
@@ -43,7 +45,7 @@ Token *tokenize(const char *p);
 /* 便捷谓词 */
 bool tok_is(const Token *t, const char *s);   /* 标点/关键字文本比较 */
 bool tok_is_kw(const Token *t, const char *kw);
-int64_t tok_num(const Token *t);
+CcInt tok_num(const Token *t);
 bool tok_at_bol(const Token *t);              /* 该 token 是否位于其源码行的行首 */
 
 /* ---------- 预处理器（M2 Task 1） ---------- */
@@ -81,13 +83,12 @@ struct Member {
     int bit_width;       /* 位域宽度；-1 = 非位域 */
 };
 
-typedef struct Type Type;
 struct Type {
     enum { TY_INT, TY_CHAR, TY_SHORT, TY_PTR, TY_VOID, TY_ARRAY, TY_STRUCT, TY_UNION, TY_FUNC } kind;
     Type *base;          /* PTR: 指向的类型；ARRAY: 元素类型；FUNC: 返回类型 */
     bool is_unsigned;    /* 供有符号/无符号除法、比较、右移区分 */
     bool is_long;        /* long/long long（32 位平台与 int 同宽；打印/诊断区分） */
-    int64_t array_len;   /* TY_ARRAY：元素数；-1 = 不完整（extern/形参/推断） */
+    CcInt array_len;   /* TY_ARRAY：元素数；-1 = 不完整（extern/形参/推断） */
     Member *members;     /* TY_STRUCT/TY_UNION */
     int size;            /* 布局字节数（STRUCT/UNION 4 对齐；ARRAY 元素总字节） */
     char *tag;           /* struct/union/enum 标签（malloc 或 NULL） */
@@ -163,7 +164,7 @@ typedef struct Node {
     struct Node *body;   /* for 循环体 */
     Token *tok;    /* 生成诊断与代码注释用 */
     Type *ty;      /* 表达式/语句类型 */
-    int64_t val;   /* ND_NUM / ND_CALL 实参数 / ND_STR 编号 / ND_MEMBER 字节偏移 */
+    CcInt val;   /* ND_NUM / ND_CALL 实参数 / ND_STR 编号 / ND_MEMBER 字节偏移 */
     int offset;    /* ND_VAR：相对 sp 的负偏移；ND_SWITCH：隐藏条件槽 */
     int num;       /* ND_LABEL / ND_GOTO / ND_CASE / ND_DEFAULT：标签编号 */
     int bit_offset;  /* ND_MEMBER 位域（-1 = 非位域） */

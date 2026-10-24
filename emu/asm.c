@@ -11,6 +11,8 @@
 #include <string.h>
 #include <stdarg.h>
 #include <ctype.h>
+#include <errno.h>
+#include "runtime/compiler_int.h"
 #include "emu/asm.h"
 #include "emu/isa.h"
 
@@ -22,7 +24,12 @@ typedef struct {
     uint32_t off;
 } Label;
 
+#ifdef SP_NATIVE
+static Label *labels;
+static int label_capacity;
+#else
 static Label labels[MAX_LABELS];
+#endif
 static int nlabels;
 
 static void set_err(AsmError *err, int line, const char *fmt, ...) {
@@ -73,10 +80,16 @@ static const char *next_line(const char *p, int *lineno, char *buf, size_t bufsz
 }
 
 /* 数字：0x… 十六进制或十进制；拒绝负数。返回 0 成功。 */
-static int parse_num(const char *s, uint64_t *val) {
+static int parse_num(const char *s, CcUInt *val) {
     char *end;
     if (*s == '-') return -1;
+    errno=0;
+#ifdef SP_NATIVE
+    *val = strtoul(s, &end, 0);
+#else
     *val = strtoull(s, &end, 0);
+#endif
+    if(errno==ERANGE)return -1;
     return (*end == 0 && end != s) ? 0 : -1;
 }
 
@@ -110,6 +123,14 @@ static int add_label(const char *name, uint32_t off, int lineno, AsmError *err) 
         set_err(err, lineno, "too many labels (max %d)", MAX_LABELS);
         return -1;
     }
+#ifdef SP_NATIVE
+    if(nlabels==label_capacity) {
+        int capacity=label_capacity?label_capacity*2:16;
+        Label *next=realloc(labels,capacity*sizeof(Label));
+        if(!next){set_err(err,lineno,"out of memory for labels");return -1;}
+        labels=next;label_capacity=capacity;
+    }
+#endif
     snprintf(labels[nlabels].name, sizeof labels[nlabels].name, "%s", name);
     labels[nlabels].off = off;
     nlabels++;
@@ -133,7 +154,7 @@ static int parse_imm(const char *op, uint32_t *val, int resolve, int lineno, Asm
     if (isa_reg_index(op) >= 0)
         return -1;                      /* 寄存器名不能当 imm（保留字） */
     {
-        uint64_t v;
+        CcUInt v;
         if (parse_num(op, &v) == 0) {
             *val = (uint32_t)v;
             return 0;
@@ -242,7 +263,7 @@ static int emit_data(const char *rest, int resolve, uint32_t off,
         { "U8", 1 }, { "U16", 2 }, { "U32", 4 }, { "U64", 8 },
     };
     int width = 0;
-    uint64_t v;
+    CcUInt v;
     uint8_t tmp[8];
     const char *p = rest;
 
@@ -256,12 +277,19 @@ static int emit_data(const char *rest, int resolve, uint32_t off,
         }
     }
     if (width == 0) return -1;              /* 非数据行，不置错 */
+#ifdef SP_NATIVE
+    if(width==8){set_err(err,lineno,"native assembler does not support U64");return -1;}
+#endif
 
     if (parse_num(p, &v) != 0) {
         set_err(err, lineno, "bad number in '%s'", rest);
         return -1;
     }
+#ifdef SP_NATIVE
+    if (width < 4 && v >= (1u << (width * 8))) {
+#else
     if (width < 8 && v >= (1ULL << (width * 8))) {
+#endif
         set_err(err, lineno, "value too large for U%d", width);
         return -1;
     }
@@ -302,7 +330,7 @@ static int emit_string(const char *rest, int resolve, uint32_t off,
 /* @0x… 对齐填充。返回填充字节数（含 0）。 */
 static int emit_pad(const char *rest, int resolve, uint32_t off,
                     uint8_t *out, size_t cap, int lineno, AsmError *err) {
-    uint64_t target;
+    CcUInt target;
     if (parse_num(rest + 1, &target) != 0) {
         set_err(err, lineno, "bad pad address '%s'", rest);
         return -1;

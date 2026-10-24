@@ -10,3 +10,18 @@
 # 汇编器/模拟器/编译器输出文件
 tests/*.asm
 tests/*.bin
+
+!runtime/platform.sym
+!user/lib/crt0.sym
+!user/lib/syscall.sym
+__pycache__/
+*.o
+!runtime/crt0_interactive.asm
+!runtime/capacity_crt0.sym
+!runtime/empty_crt0.asm
+*.spx
+
+.superpowers/
+/build/
+/docs/
+tests/*.tmp

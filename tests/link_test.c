@@ -107,10 +107,14 @@ static void test_link_two_objects(void) {
     LinkError err;
     CHECK(symld_link(objs, 2, "runtime/crt0.asm", out, NULL, &err));
     /* 输出为绝对 asm：g 的数据引用已解析为数字（无 @g 残留） */
-    char buf[8192];
     long len = ftell(out);
+    CHECK(len>0);
+    if(len<=0){fclose(out);obj_free(oa);obj_free(ob);return;}
+    char *buf=malloc((size_t)len+1);
+    CHECK(buf!=NULL);
+    if(!buf){fclose(out);obj_free(oa);obj_free(ob);return;}
     rewind(out);
-    CHECK(len == (long)fread(buf, 1, sizeof buf - 1, out));
+    CHECK(len == (long)fread(buf, 1, (size_t)len, out));
     buf[len] = 0;
     fclose(out);
     CHECK(strstr(buf, "@g") == NULL);
@@ -118,6 +122,7 @@ static void test_link_two_objects(void) {
     CHECK(strstr(buf, "main:") != NULL);
     CHECK(strstr(buf, "halt:") != NULL);
     CHECK(strstr(buf, "__bss_start") == NULL); /* 内置符号已解析 */
+    free(buf);
     obj_free(oa); obj_free(ob);
 }
 
@@ -164,26 +169,44 @@ static void test_link_bss_cleared(void) {
     FILE *out = tmpfile();
     LinkError err;
     CHECK(symld_link(objs, 1, "runtime/crt0.asm", out, NULL, &err));
-    char text[8192];
     long len = ftell(out);
+    CHECK(len>0);
+    if(len<=0){fclose(out);obj_free(o);return;}
+    char *text=malloc((size_t)len+1);
+    size_t capacity=(size_t)len*2+64;
+    uint8_t *bin=malloc(capacity);
+    CHECK(text && bin);
+    if(!text || !bin){free(text);free(bin);fclose(out);obj_free(o);return;}
     rewind(out);
-    CHECK(len > 0 && len < (long)sizeof text);
     len = fread(text, 1, (size_t)len, out);
     text[len] = 0;
     fclose(out);
-    uint8_t bin[8192];
     AsmError aerr;
-    int n = asm_assemble(text, bin, sizeof bin, &aerr);
+    int n = asm_assemble(text, bin, capacity, &aerr);
     CHECK(n > 0);
+    if(n<=0){free(text);free(bin);obj_free(o);return;}
     EmuResult res = emu_run(bin, (size_t)n, 8 << 20, 100000000);
     CHECK(res.error == 0 && res.exit_code == 0);
     free(res.mem);
     free(res.disk);
+    free(text);free(bin);
     obj_free(o);
 }
 
 int main(void) {
+    {
+        Obj *o=obj_new();FILE *fp=tmpfile();
+        fputs(".text\r\ncrlf_entry:\r\n    ret\r\n.sym crlf_entry T text 0 0\r\n",fp);rewind(fp);
+        CHECK(obj_read(o,fp));CHECK(o->n_text==2);
+        fclose(fp);obj_free(o);
+    }
     test_line_sizes();
+    {
+        Obj *o=obj_new();FILE *readonly=fopen("tests/for_decl_probe.c","rb");
+        CHECK(readonly!=NULL);
+        CHECK(!obj_write(o,readonly));
+        fclose(readonly);obj_free(o);
+    }
     test_obj_roundtrip();
     test_codegen_obj_form();
     test_link_two_objects();

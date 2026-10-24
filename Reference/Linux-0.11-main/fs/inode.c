@@ -10,6 +10,9 @@
 #include <linux/sched.h>
 #include <linux/kernel.h>
 #include <linux/mm.h>
+#ifdef SP_INTERACTIVE
+#include <linux/symplus.h>
+#endif
 #include <asm/system.h>
 
 struct m_inode inode_table[NR_INODE]={{0,},};
@@ -69,6 +72,11 @@ void sync_inodes(void)
 	}
 }
 
+/* SYMPLUS-PORT: nonzero zones must never address superblocks/bitmaps/inodes. */
+static int valid_zone(struct m_inode *inode,int zone) {
+    struct super_block *s=get_super(inode->i_dev);
+    return !zone || (s && zone>=s->s_firstdatazone && zone<s->s_nzones);
+}
 static int _bmap(struct m_inode * inode,int block,int create)
 {
 	struct buffer_head * bh;
@@ -84,7 +92,7 @@ static int _bmap(struct m_inode * inode,int block,int create)
 				inode->i_ctime=CURRENT_TIME;
 				inode->i_dirt=1;
 			}
-		return inode->i_zone[block];
+        return valid_zone(inode,inode->i_zone[block])?inode->i_zone[block]:-1;
 	}
 	block -= 7;
 	if (block<512) {
@@ -95,6 +103,7 @@ static int _bmap(struct m_inode * inode,int block,int create)
 			}
 		if (!inode->i_zone[7])
 			return 0;
+        if(!valid_zone(inode,inode->i_zone[7]))return -1;
 		if (!(bh = bread(inode->i_dev,inode->i_zone[7])))
 			return 0;
 		i = ((unsigned short *) (bh->b_data))[block];
@@ -104,7 +113,7 @@ static int _bmap(struct m_inode * inode,int block,int create)
 				bh->b_dirt=1;
 			}
 		brelse(bh);
-		return i;
+        return valid_zone(inode,i)?i:-1;
 	}
 	block -= 512;
 	if (create && !inode->i_zone[8])
@@ -114,6 +123,7 @@ static int _bmap(struct m_inode * inode,int block,int create)
 		}
 	if (!inode->i_zone[8])
 		return 0;
+    if(!valid_zone(inode,inode->i_zone[8]))return -1;
 	if (!(bh=bread(inode->i_dev,inode->i_zone[8])))
 		return 0;
 	i = ((unsigned short *)bh->b_data)[block>>9];
@@ -125,6 +135,7 @@ static int _bmap(struct m_inode * inode,int block,int create)
 	brelse(bh);
 	if (!i)
 		return 0;
+    if(!valid_zone(inode,i))return -1;
 	if (!(bh=bread(inode->i_dev,i)))
 		return 0;
 	i = ((unsigned short *)bh->b_data)[block&511];
@@ -134,7 +145,7 @@ static int _bmap(struct m_inode * inode,int block,int create)
 			bh->b_dirt=1;
 		}
 	brelse(bh);
-	return i;
+    return valid_zone(inode,i)?i:-1;
 }
 
 int bmap(struct m_inode * inode,int block)
@@ -149,29 +160,27 @@ int create_block(struct m_inode * inode, int block)
 		
 /* SYMPLUS-PORT: inode slot allocation deferred to M3 -> stub (callers
  * handle NULL) */
-struct m_inode * new_inode(int dev)
-{
-	return NULL;
+/* SYMPLUS-PORT: persistent inode bitmap allocation, all state in Linux inode cache. */
+struct m_inode * new_inode(int dev) {
+    struct super_block *sb=get_super(dev);struct m_inode *n;int i;
+    if(!sb)return NULL;
+    for(i=1;i<=sb->s_ninodes;i++)if(!(sb->s_imap[0]->b_data[i>>3]&(1<<(i&7)))) {
+        n=get_empty_inode();if(!n)return NULL;
+        sb->s_imap[0]->b_data[i>>3]|=1<<(i&7);sb->s_imap[0]->b_dirt=1;
+        n->i_dev=dev;n->i_num=i;n->i_uid=current->euid;n->i_gid=current->egid;
+        n->i_nlinks=1;n->i_dirt=1;n->i_atime=n->i_mtime=n->i_ctime=CURRENT_TIME;
+        return n;
+    }
+    return NULL;
 }
-
-/* SYMPLUS-PORT: free_inode body restored for M2 kernel linking (inode
- * slot release only; free-inode list management deferred to M3 memory
- * work). The original tree referenced this symbol without defining it. */
-void free_inode(struct m_inode * inode)
-{
-	int i;
-	if (!inode)
-		return;
-	if (inode->i_count != 1) {
-		printk("trying to free inode with count=%d
-",inode->i_count);
-		return;
-	}
-	inode->i_count = 0;
-	inode->i_dirt = 0;
-	inode->i_nlinks = 0;
-	for (i = 0; i < 8; i++)
-		inode->i_zone[i] = 0;
+void free_inode(struct m_inode *n) {
+    struct super_block *s;int bit;
+    if(!n || n->i_count!=1 || n->i_nlinks)return;
+    s=get_super(n->i_dev);bit=n->i_num;
+    if(s && bit>0 && bit<=s->s_ninodes) {
+        s->s_imap[0]->b_data[bit>>3]&=~(1<<(bit&7));s->s_imap[0]->b_dirt=1;
+    }
+    memset(n,0,sizeof(*n));
 }
 
 void iput(struct m_inode * inode)
@@ -331,9 +340,13 @@ static void read_inode(struct m_inode * inode)
 		(inode->i_num-1)/INODES_PER_BLOCK;
 	if (!(bh=bread(inode->i_dev,block)))
 		panic("unable to read i-node block");
+#ifdef SP_INTERACTIVE
+    sp_inode_decode(inode,(unsigned char *)bh->b_data+((inode->i_num-1)%32)*32);
+#else
 	*(struct d_inode *)inode =
 		((struct d_inode *)bh->b_data)
 			[(inode->i_num-1)%INODES_PER_BLOCK];
+#endif
 	brelse(bh);
 	unlock_inode(inode);
 }
@@ -355,9 +368,13 @@ static void write_inode(struct m_inode * inode)
 		(inode->i_num-1)/INODES_PER_BLOCK;
 	if (!(bh=bread(inode->i_dev,block)))
 		panic("unable to read i-node block");
+#ifdef SP_INTERACTIVE
+    sp_inode_encode((unsigned char *)bh->b_data+((inode->i_num-1)%32)*32,inode);
+#else
 	((struct d_inode *)bh->b_data)
 		[(inode->i_num-1)%INODES_PER_BLOCK] =
 			*(struct d_inode *)inode;
+#endif
 	bh->b_dirt=1;
 	inode->i_dirt=0;
 	brelse(bh);

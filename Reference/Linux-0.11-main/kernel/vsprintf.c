@@ -32,8 +32,13 @@ static int skip_atoi(const char **s)
 #define SPECIAL	32		/* 0x */
 #define SMALL	64		/* use 'abcdef' instead of 'ABCDEF' */
 
-/* SYMPLUS-PORT: statement-expr -> comma expr; n is modified in place */
-#define do_div(n,base) (((n) % (base)) + 0 * ((n) /= (base)))
+/* SYMPLUS-PORT: sequence remainder before quotient; the old macro was undefined C. */
+static int sp_do_div(int *n,int base) {
+    int remainder=*n%base;
+    *n=*n/base;
+    return remainder;
+}
+#define do_div(n,base) sp_do_div(&(n),(base))
 
 static char * number(char * str, int num, int base, int size, int precision
 	,int type)

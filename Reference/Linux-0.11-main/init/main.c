@@ -28,6 +28,9 @@ static inline _syscall0(int,sync)
 
 #include <linux/tty.h>
 #include <linux/sched.h>
+#ifdef SP_INTERACTIVE
+#include <linux/symplus.h>
+#endif
 #include <linux/head.h>
 #include <asm/system.h>
 #include <asm/io.h>
@@ -103,6 +106,11 @@ struct drive_info { char dummy[32]; } drive_info;
 
 void main(void)		/* This really IS void, no error here. */
 {			/* The startup routine assumes (well, ...) this */
+#ifdef SP_INTERACTIVE
+    /* SYMPLUS-PORT: flat-memory platform boot replaces BIOS/x86 startup. */
+    sp_boot();
+    return;
+#endif
 /*
  * Interrupts are still disabled. Do necessary setups, then
  * enable them

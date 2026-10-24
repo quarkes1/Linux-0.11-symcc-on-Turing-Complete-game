@@ -33,6 +33,7 @@
 #include <string.h>
 
 #include "symcc.h"
+#include "const_int.h"
 
 static Token *tok;
 
@@ -63,13 +64,16 @@ static Type *ty_long(void) {
     return &t;
 }
 
-static Type *ty_array(Type *base, int64_t len) {
+static Type *ty_array(Type *base, CcInt len) {
+    if(len>=0 && base->size>0 && len>0x7fffffff/base->size) {
+        fprintf(stderr,"array size out of range\n");exit(1);
+    }
     Type *t = (Type *)calloc(1, sizeof(Type));
     if (!t) { fprintf(stderr, "out of memory\n"); exit(1); }
     t->kind = TY_ARRAY;
     t->base = base;
     t->array_len = len;
-    t->size = len < 0 ? 0 : (int)(len * (int64_t)base->size);
+    t->size = len < 0 ? 0 : (int)(len * (CcInt)base->size);
     return t;
 }
 
@@ -87,11 +91,13 @@ typedef struct Var {
     char *name;
     int len;
     int offset;      /* 相对 sp 的负偏移 */
+    char *global_name; /* scoped alias for a static/extern local */
     Type *ty;
 } Var;
 
 static Var *vars;
 static int locals_bytes;   /* 当前函数帧大小累计 */
+static int local_static_id;
 
 /* typedef 表 / 枚举常量表 / struct-union-enum tag 表 */
 typedef struct TDef {
@@ -105,7 +111,7 @@ typedef struct EnumConst {
     struct EnumConst *next;
     char *name;
     int len;
-    int64_t val;
+    CcInt val;
 } EnumConst;
 
 typedef struct Tag {
@@ -152,7 +158,17 @@ static Type *paren_suffix(Type *ty, Token **namep);
 
 static void error_at(Token *t, const char *msg) {
     fprintf(stderr, "parse error at \"%.*s\": %s\n", t->len, t->loc, msg);
+    fprintf(stderr,"near: %.80s\n",t->loc);
     exit(1);
+}
+static int checked_layout(int pos,int bytes,int align) {
+    unsigned start;
+    if(pos<0 || bytes<0 || (unsigned)pos>0x7fffffffu-(align-1))goto bad;
+    start=((unsigned)pos+align-1)&~(unsigned)(align-1);
+    if((unsigned)bytes>0x7fffffffu-start)goto bad;
+    return start+bytes;
+bad:
+    fprintf(stderr,"aggregate/frame size out of range\n");exit(1);
 }
 
 static Token *skip(const char *s) {
@@ -171,7 +187,7 @@ static Node *new_node(int kind, Token *t) {
     return n;
 }
 
-static Node *new_num(int64_t v, Token *t) {
+static Node *new_num(CcInt v, Token *t) {
     Node *n = new_node(ND_NUM, t);
     n->val = v;
     n->ty = ty_int;
@@ -211,7 +227,7 @@ static Node *clone_node(Node *n) {
 /* 隐藏临时局部变量（后缀 ++/--、switch 条件）：分配 4 字节帧槽，
  * 返回 ND_VAR 节点（ty 由调用方设置） */
 static Node *hidden_lvar(Type *ty) {
-    locals_bytes += 4;
+    locals_bytes=checked_layout(locals_bytes,4,4);
     Node *v = new_node(ND_VAR, NULL);
     v->offset = -locals_bytes;
     v->ty = ty;
@@ -247,6 +263,10 @@ static void register_case(Node *n, Token *t) {
             if (c->kind == ND_DEFAULT)
                 error_at(t, "duplicate default");
     }
+    /* The statement chain and case index need independent next pointers. */
+    Node *entry = (Node *)calloc(1,sizeof(Node));
+    if(!entry)exit(1);
+    *entry=*n;entry->next=NULL;n=entry;
     Node *head = case_stack[case_depth - 1];
     if (head) {
         Node *cur = head;
@@ -294,7 +314,7 @@ static void add_tdef(Token *t, Type *ty) {
     tdefs = d;    /* 重复定义覆盖（宽松，幂等） */
 }
 
-static void add_enum(Token *t, int64_t val) {
+static void add_enum(Token *t, CcInt val) {
     EnumConst *e = (EnumConst *)calloc(1, sizeof(EnumConst));
     if (!e) { fprintf(stderr, "out of memory\n"); exit(1); }
     e->name = xstrndup(t->loc, (size_t)t->len);
@@ -363,176 +383,144 @@ static Node *new_assign(Node *lhs, Node *rhs, Token *t);  /* 后缀 ++/-- 用 */
 static Node *assign(void);   /* 复合赋值 rhs 用 */
 static char *xstrndup(const char *s, size_t n);  /* label_of 用 */
 
-static int64_t eval_const(Token **rest, Token *t);   /* 主入口 */
-static int64_t eval_ternary(Token **cur);
-static int64_t eval_logor(Token **cur);
-static int64_t eval_logand(Token **cur);
-static int64_t eval_bitor(Token **cur);
-static int64_t eval_bitxor(Token **cur);
-static int64_t eval_bitand(Token **cur);
-static int64_t eval_equality(Token **cur);
-static int64_t eval_rel(Token **cur);
-static int64_t eval_shift(Token **cur);
-static int64_t eval_add(Token **cur);
-static int64_t eval_mul(Token **cur);
-static int64_t eval_unary(Token **cur);
-static int64_t eval_primary(Token **cur);
+static CcInt eval_const(Token **rest, Token *t);   /* 主入口 */
+static CcInt eval_ternary(Token **cur);
+static CcInt eval_logor(Token **cur);
+static CcInt eval_logand(Token **cur);
+static CcInt eval_bitor(Token **cur);
+static CcInt eval_bitxor(Token **cur);
+static CcInt eval_bitand(Token **cur);
+static CcInt eval_equality(Token **cur);
+static CcInt eval_rel(Token **cur);
+static CcInt eval_shift(Token **cur);
+static CcInt eval_add(Token **cur);
+static CcInt eval_mul(Token **cur);
+static CcInt eval_unary(Token **cur);
+static CcInt eval_primary(Token **cur);
 
-static int64_t eval_const(Token **rest, Token *t) {
+static CcInt eval_const(Token **rest, Token *t) {
     Token *cur = t;
-    int64_t v = eval_ternary(&cur);
+    CcInt v = eval_ternary(&cur);
     *rest = cur;
     return v;
 }
 
-static int64_t eval_ternary(Token **cur) {
-    int64_t c = eval_logor(cur);
+static CcInt eval_ternary(Token **cur) {
+    CcInt c = eval_logor(cur);
     if (tok_is(*cur, "?")) {
         *cur = (*cur)->next;
-        int64_t a = eval_ternary(cur);
+        CcInt a = eval_ternary(cur);int ua=cc_eval_unsigned;
         if (!tok_is(*cur, ":"))
             error_at(*cur, "expected ':' in conditional expression");
         *cur = (*cur)->next;
-        int64_t b = eval_ternary(cur);
-        return c ? a : b;
+        CcInt b = eval_ternary(cur);
+        cc_eval_unsigned=ua||cc_eval_unsigned;
+        return cc_eval_unsigned?(CcInt)(uint32_t)(c?a:b):(c?a:b);
     }
     return c;
 }
 
-static int64_t eval_logor(Token **cur) {
-    int64_t a = eval_logand(cur);
-    while (tok_is(*cur, "||")) {
-        *cur = (*cur)->next;
-        int64_t b = eval_logand(cur);
-        a = (a != 0) || (b != 0);
+static CcInt eval_logor(Token **cur) {
+    CcInt value=eval_logand(cur);int uns=cc_eval_unsigned;
+    while(tok_is(*cur,"||")) {
+        Token *op=*cur;*cur=op->next;
+        CcInt right=eval_logand(cur);
+        value=cc_binary(value,uns,right,cc_eval_unsigned,op);uns=cc_eval_unsigned;
     }
-    return a;
+    return value;
 }
 
-static int64_t eval_logand(Token **cur) {
-    int64_t a = eval_bitor(cur);
-    while (tok_is(*cur, "&&")) {
-        *cur = (*cur)->next;
-        int64_t b = eval_bitor(cur);
-        a = (a != 0) && (b != 0);
+static CcInt eval_logand(Token **cur) {
+    CcInt value=eval_bitor(cur);int uns=cc_eval_unsigned;
+    while(tok_is(*cur,"&&")) {
+        Token *op=*cur;*cur=op->next;
+        CcInt right=eval_bitor(cur);
+        value=cc_binary(value,uns,right,cc_eval_unsigned,op);uns=cc_eval_unsigned;
     }
-    return a;
+    return value;
 }
 
-static int64_t eval_bitor(Token **cur) {
-    int64_t a = eval_bitxor(cur);
-    while (tok_is(*cur, "|")) {
-        *cur = (*cur)->next;
-        a |= eval_bitxor(cur);
+static CcInt eval_bitor(Token **cur) {
+    CcInt value=eval_bitxor(cur);int uns=cc_eval_unsigned;
+    while(tok_is(*cur,"|")) {
+        Token *op=*cur;*cur=op->next;
+        CcInt right=eval_bitxor(cur);
+        value=cc_binary(value,uns,right,cc_eval_unsigned,op);uns=cc_eval_unsigned;
     }
-    return a;
+    return value;
 }
 
-static int64_t eval_bitxor(Token **cur) {
-    int64_t a = eval_bitand(cur);
-    while (tok_is(*cur, "^")) {
-        *cur = (*cur)->next;
-        a ^= eval_bitand(cur);
+static CcInt eval_bitxor(Token **cur) {
+    CcInt value=eval_bitand(cur);int uns=cc_eval_unsigned;
+    while(tok_is(*cur,"^")) {
+        Token *op=*cur;*cur=op->next;
+        CcInt right=eval_bitand(cur);
+        value=cc_binary(value,uns,right,cc_eval_unsigned,op);uns=cc_eval_unsigned;
     }
-    return a;
+    return value;
 }
 
-static int64_t eval_bitand(Token **cur) {
-    int64_t a = eval_equality(cur);
-    while (tok_is(*cur, "&")) {
-        *cur = (*cur)->next;
-        a &= eval_equality(cur);
+static CcInt eval_bitand(Token **cur) {
+    CcInt value=eval_equality(cur);int uns=cc_eval_unsigned;
+    while(tok_is(*cur,"&")) {
+        Token *op=*cur;*cur=op->next;
+        CcInt right=eval_equality(cur);
+        value=cc_binary(value,uns,right,cc_eval_unsigned,op);uns=cc_eval_unsigned;
     }
-    return a;
+    return value;
 }
 
-static int64_t eval_equality(Token **cur) {
-    int64_t a = eval_rel(cur);
-    for (;;) {
-        if (tok_is(*cur, "==")) {
-            *cur = (*cur)->next;
-            a = (a == eval_rel(cur));
-        } else if (tok_is(*cur, "!=")) {
-            *cur = (*cur)->next;
-            a = (a != eval_rel(cur));
-        } else {
-            return a;
-        }
+static CcInt eval_equality(Token **cur) {
+    CcInt value=eval_rel(cur);int uns=cc_eval_unsigned;
+    while(tok_is(*cur,"==") || tok_is(*cur,"!=")) {
+        Token *op=*cur;*cur=op->next;
+        CcInt right=eval_rel(cur);
+        value=cc_binary(value,uns,right,cc_eval_unsigned,op);uns=cc_eval_unsigned;
     }
+    return value;
 }
 
-static int64_t eval_rel(Token **cur) {
-    int64_t a = eval_shift(cur);
-    for (;;) {
-        if (tok_is(*cur, "<")) {
-            *cur = (*cur)->next;
-            a = (a < eval_shift(cur));
-        } else if (tok_is(*cur, "<=")) {
-            *cur = (*cur)->next;
-            a = (a <= eval_shift(cur));
-        } else if (tok_is(*cur, ">")) {
-            *cur = (*cur)->next;
-            a = (a > eval_shift(cur));
-        } else if (tok_is(*cur, ">=")) {
-            *cur = (*cur)->next;
-            a = (a >= eval_shift(cur));
-        } else {
-            return a;
-        }
+static CcInt eval_rel(Token **cur) {
+    CcInt value=eval_shift(cur);int uns=cc_eval_unsigned;
+    while(tok_is(*cur,"<") || tok_is(*cur,"<=") || tok_is(*cur,">") || tok_is(*cur,">=")) {
+        Token *op=*cur;*cur=op->next;
+        CcInt right=eval_shift(cur);
+        value=cc_binary(value,uns,right,cc_eval_unsigned,op);uns=cc_eval_unsigned;
     }
+    return value;
 }
 
-static int64_t eval_shift(Token **cur) {
-    int64_t a = eval_add(cur);
-    for (;;) {
-        if (tok_is(*cur, "<<")) {
-            *cur = (*cur)->next;
-            a = (a << eval_add(cur));
-        } else if (tok_is(*cur, ">>")) {
-            *cur = (*cur)->next;
-            a = (a >> eval_add(cur));
-        } else {
-            return a;
-        }
+static CcInt eval_shift(Token **cur) {
+    CcInt value=eval_add(cur);int uns=cc_eval_unsigned;
+    while(tok_is(*cur,"<<") || tok_is(*cur,">>")) {
+        Token *op=*cur;*cur=op->next;
+        CcInt right=eval_add(cur);
+        value=cc_binary(value,uns,right,cc_eval_unsigned,op);uns=cc_eval_unsigned;
     }
+    return value;
 }
 
-static int64_t eval_add(Token **cur) {
-    int64_t a = eval_mul(cur);
-    for (;;) {
-        if (tok_is(*cur, "+")) {
-            *cur = (*cur)->next;
-            a += eval_mul(cur);
-        } else if (tok_is(*cur, "-")) {
-            *cur = (*cur)->next;
-            a -= eval_mul(cur);
-        } else {
-            return a;
-        }
+static CcInt eval_add(Token **cur) {
+    CcInt value=eval_mul(cur);int uns=cc_eval_unsigned;
+    while(tok_is(*cur,"+") || tok_is(*cur,"-")) {
+        Token *op=*cur;*cur=op->next;
+        CcInt right=eval_mul(cur);
+        value=cc_binary(value,uns,right,cc_eval_unsigned,op);uns=cc_eval_unsigned;
     }
+    return value;
 }
 
-static int64_t eval_mul(Token **cur) {
-    int64_t a = eval_unary(cur);
-    for (;;) {
-        if (tok_is(*cur, "*")) {
-            *cur = (*cur)->next;
-            a *= eval_unary(cur);
-        } else if (tok_is(*cur, "/")) {
-            *cur = (*cur)->next;
-            int64_t b = eval_unary(cur);
-            a = b ? a / b : 0;
-        } else if (tok_is(*cur, "%")) {
-            *cur = (*cur)->next;
-            int64_t b = eval_unary(cur);
-            a = b ? a % b : 0;
-        } else {
-            return a;
-        }
+static CcInt eval_mul(Token **cur) {
+    CcInt value=eval_unary(cur);int uns=cc_eval_unsigned;
+    while(tok_is(*cur,"*") || tok_is(*cur,"/") || tok_is(*cur,"%")) {
+        Token *op=*cur;*cur=op->next;
+        CcInt right=eval_unary(cur);
+        value=cc_binary(value,uns,right,cc_eval_unsigned,op);uns=cc_eval_unsigned;
     }
+    return value;
 }
 
-static int64_t eval_unary(Token **cur) {
+static CcInt eval_unary(Token **cur) {
     Token *t = *cur;
     if (tok_is(t, "+")) {
         *cur = t->next;
@@ -544,7 +532,7 @@ static int64_t eval_unary(Token **cur) {
     }
     if (tok_is(t, "!")) {
         *cur = t->next;
-        return !eval_unary(cur);
+        CcInt v=eval_unary(cur);cc_eval_unsigned=0;return !v;
     }
     if (tok_is(t, "~")) {
         *cur = t->next;
@@ -566,7 +554,7 @@ static int64_t eval_unary(Token **cur) {
             if (!tok_is(*cur, ")"))
                 error_at(*cur, "expected ')' in sizeof");
             *cur = (*cur)->next;
-            return ty->size;
+            cc_eval_unsigned=1;return ty->size;
         }
         /* sizeof 表达式：不求值，只取类型（解析会建节点，无副作用） */
         Token *save = tok;
@@ -574,7 +562,7 @@ static int64_t eval_unary(Token **cur) {
         Node *e = unary();
         *cur = tok;
         tok = save;
-        return e->ty->size;
+        cc_eval_unsigned=1;return e->ty->size;
     }
     /* 类型转换：(type) unary —— 常量求值只取值（如 `(void *) 0` 初始化器） */
     if (tok_is(t, "(") && is_declspec_start(t->next)) {
@@ -582,26 +570,31 @@ static int64_t eval_unary(Token **cur) {
         tok = t->next;
         Type *bt = declspec();
         Token *nm = NULL;
-        declarator(bt, &nm);   /* abstract 声明符（名字可省略） */
+        Type *cast_ty=declarator(bt, &nm);   /* abstract 声明符（名字可省略） */
         *cur = tok;
         tok = save;
         if (!tok_is(*cur, ")"))
             error_at(*cur, "expected ')' in cast");
         *cur = (*cur)->next;
-        return eval_unary(cur);
+        CcInt value=eval_unary(cur);
+        cc_eval_unsigned=cast_ty->is_unsigned || cast_ty->kind==TY_PTR;
+        if(cast_ty->size==1)value=cc_eval_unsigned?(unsigned char)value:(signed char)value;
+        else if(cast_ty->size==2)value=cc_eval_unsigned?(unsigned short)value:(short)value;
+        else value=cc_eval_unsigned?(CcInt)(uint32_t)value:(CcInt)(int32_t)value;
+        return value;
     }
     return eval_primary(cur);
 }
 
-static int64_t eval_primary(Token **cur) {
+static CcInt eval_primary(Token **cur) {
     Token *t = *cur;
     if (t->kind == TK_NUM) {
         *cur = t->next;
-        return t->val;
+        cc_eval_unsigned=t->is_unsigned;return t->val;
     }
     if (tok_is(t, "(")) {
         *cur = t->next;
-        int64_t v = eval_ternary(cur);
+        CcInt v = eval_ternary(cur);
         if (!tok_is(*cur, ")"))
             error_at(*cur, "expected ')' in constant expression");
         *cur = (*cur)->next;
@@ -611,7 +604,7 @@ static int64_t eval_primary(Token **cur) {
         EnumConst *e = find_enum(t);
         if (e) {
             *cur = t->next;
-            return e->val;
+            cc_eval_unsigned=0;return e->val;
         }
         error_at(t, "undefined identifier in constant expression");
     }
@@ -810,14 +803,15 @@ static Type *paren_suffix(Type *ty, Token **namep) {
 static Type *suffix(Type *base, Token **namep) {
     if (tok_is(tok, "[")) {
         tok = tok->next;
-        int64_t len = -1;
+        CcInt len = -1;
         if (!tok_is(tok, "]"))
             len = eval_const(&tok, tok);
         skip("]");
-        Type *arr = ty_array(base, len);
-        if (base->kind == TY_FUNC)
+        Type *element=suffix(base,namep);
+        Type *arr = ty_array(element, len);
+        if (element->kind == TY_FUNC)
             error_at(tok, "array of functions");
-        return suffix(arr, namep);
+        return arr;
     }
     if (tok_is(tok, "(")) {
         /* 函数类型：解析参数（ANSI 或 K&R 名字列表） */
@@ -961,6 +955,7 @@ static void struct_members(Type *ty) {
         if (tok_is(tok, ":")) {
             tok = tok->next;
             int width = (int)eval_const(&tok, tok);
+            if(width<0 || width>32)error_at(tok,"bit-field width out of range");
             if (width == 0) {
                 /* :0 强制对齐下一单元 */
                 in_bf = false;
@@ -968,8 +963,8 @@ static void struct_members(Type *ty) {
             } else {
                 if (!in_bf || bitpos + width > 32) {
                     if (in_bf)
-                        off += 4;      /* 越过旧位域单元 */
-                    off = (off + 3) & ~3;
+                    off=checked_layout(off,4,1); /* 越过旧位域单元 */
+                    off=checked_layout(off,0,4);
                     bitpos = 0;
                     in_bf = true;
                 }
@@ -987,6 +982,7 @@ static void struct_members(Type *ty) {
             if (tok_is(tok, ":")) {
                 tok = tok->next;
                 width = (int)eval_const(&tok, tok);
+                if(width<0 || width>32)error_at(tok,"bit-field width out of range");
             }
             if (!name)
                 error_at(tok, "member name missing");
@@ -1012,8 +1008,8 @@ static void struct_members(Type *ty) {
                     error_at(name, "bit-field width exceeds 32");
                 if (!in_bf || bitpos + width > 32) {
                     if (in_bf)
-                        off += 4;          /* 越过旧位域单元 */
-                    off = (off + 3) & ~3;
+                        off=checked_layout(off,4,1); /* 越过旧位域单元 */
+                    off=checked_layout(off,0,4);
                     bitpos = 0;
                     in_bf = true;
                 }
@@ -1025,12 +1021,16 @@ static void struct_members(Type *ty) {
                  * 非位域/新单元越过（off += 4）。 */
             } else {
                 if (in_bf) {
-                    off += 4;              /* 越过位域单元 */
+                    off=checked_layout(off,4,1); /* 越过位域单元 */
                     in_bf = false;
                 }
-                off = (off + 3) & ~3;      /* 4 对齐（char 成员也 4 对齐——简化） */
+                /* Natural scalar alignment is required by MINIX disk records. */
+                Type *element = mty;
+                while (element->kind == TY_ARRAY) element = element->base;
+                int align = element->kind == TY_CHAR ? 1 : element->kind == TY_SHORT ? 2 : 4;
+                off=checked_layout(off,0,align);
                 m->offset = off;
-                off += mty->size;
+                off=checked_layout(off,mty->size,1);
             }
             cur = cur->next = m;
         member_done:
@@ -1044,9 +1044,9 @@ static void struct_members(Type *ty) {
     }
     /* 循环在 "}" 处退出，不消费（调用方 struct_decl skip） */
     if (in_bf)
-        off += 4;                  /* 尾部位域单元占 4 字节 */
+        off=checked_layout(off,4,1); /* 尾部位域单元占 4 字节 */
     ty->members = head.next;
-    ty->size = (off + 3) & ~3;   /* 4 对齐总大小 */
+    ty->size=checked_layout(off,0,4);
     if (ty->size == 0)
         error_at(tok, "empty struct/union not supported");
 }
@@ -1062,7 +1062,7 @@ static Type *enum_decl(void) {
     }
     if (tok_is(tok, "{")) {
         tok = tok->next;
-        int64_t val = 0;
+        CcInt val = 0;
         while (!tok_is(tok, "}")) {
             if (tok->kind == TK_EOF)
                 error_at(tok, "unclosed enum body");
@@ -1184,7 +1184,7 @@ static Node *new_binop(int kind, Node *lhs, Node *rhs, Token *t) {
 }
 
 /* 解析实参列表（tok 在 "(" 上）→ rhs 链表，*nargs = 实参数 */
-static Node *parse_call_args(int64_t *nargs) {
+static Node *parse_call_args(CcInt *nargs) {
     skip("(");
     Node head = {0}, *cur = &head;
     int n = 0;
@@ -1208,7 +1208,8 @@ static Node *find_fp_var(Token *t) {
     for (Var *v = vars; v; v = v->next) {
         if (v->len == t->len && strncmp(v->name, t->loc, (size_t)v->len) == 0) {
             if (v->ty->kind == TY_PTR && v->ty->base->kind == TY_FUNC) {
-                Node *n = new_node(ND_VAR, t);
+                Node *n = new_node(v->global_name?ND_GVAR:ND_VAR, t);
+                n->name=v->global_name;
                 n->offset = v->offset;
                 n->ty = v->ty;
                 return n;
@@ -1261,7 +1262,8 @@ static Node *primary(void) {
          * 了全部函数，函数体内的同名参数/局部必须先行命中） */
         for (Var *v = vars; v; v = v->next) {
             if (v->len == tok->len && strncmp(v->name, tok->loc, (size_t)v->len) == 0) {
-                Node *n = new_node(ND_VAR, tok);
+                Node *n = new_node(v->global_name?ND_GVAR:ND_VAR, tok);
+                n->name=v->global_name;
                 n->offset = v->offset;
                 n->ty = v->ty;
                 tok = tok->next;
@@ -1834,7 +1836,7 @@ static Node *expr(void) {
 /* ---------- 语句 ---------- */
 
 /* target[i]（target 是数组表达式，求值 = 地址） */
-static Node *arr_elem(Node *target, int64_t i, Type *elem, Token *t) {
+static Node *arr_elem(Node *target, CcInt i, Type *elem, Token *t) {
     Node *idx = (elem->size == 1) ? new_num(i, t)
                                   : new_binary(ND_MUL, new_num(i, t), new_num(elem->size, t), t);
     Node *addr = new_binary(ND_ADD, target, idx, t);
@@ -1850,7 +1852,7 @@ static Node *init_local(Token **rest, Token *t, Type *ty, Node *target);
 static Node *init_local(Token **rest, Token *t, Type *ty, Node *target) {
     if (ty->kind == TY_ARRAY) {
         Node head = {0}, *cur = &head;
-        int64_t len = ty->array_len;
+        CcInt len = ty->array_len;
         if (t->kind == TK_STR && ty->base->kind == TY_CHAR) {
             /* 字符串初始化：字节 + NUL 置零 */
             if (t->str_len >= len)
@@ -1858,7 +1860,7 @@ static Node *init_local(Token **rest, Token *t, Type *ty, Node *target) {
             for (int i = 0; i < t->str_len; i++)
                 cur = cur->next = new_assign(                                             arr_elem(target, i, ty->base, t),
                                              new_num((unsigned char)t->str[i], t), t);
-            for (int64_t i = t->str_len; i < len; i++)
+            for (CcInt i = t->str_len; i < len; i++)
                 cur = cur->next = new_assign(                                             arr_elem(target, i, ty->base, t),
                                              new_num(0, t), t);
             *rest = t->next;
@@ -1867,7 +1869,7 @@ static Node *init_local(Token **rest, Token *t, Type *ty, Node *target) {
         if (!tok_is(t, "{"))
             error_at(t, "array initializer must be '{' or string");
         tok = t->next;
-        int64_t i;
+        CcInt i;
         for (i = 0; i < len; i++) {
             if (tok_is(tok, "}"))
                 break;
@@ -1982,20 +1984,18 @@ static Node *decl_stmt(void) {
         Global *hoisted = NULL;
 
         if (decl_is_static) {
-            /* static 局部 → 提升为全局（跨调用共享；同名合并） */
-            hoisted = find_global(name);
-            if (!hoisted) {
-                hoisted = (Global *)calloc(1, sizeof(Global));
-                if (!hoisted) { fprintf(stderr, "out of memory\n"); exit(1); }
-                hoisted->name = xstrndup(name->loc, (size_t)name->len);
-                hoisted->len = name->len;
-                hoisted->ty = ty;
-                hoisted->is_static = true;
-                hoisted->next = globals;
-                globals = hoisted;
-            }
+            /* One private symbol per declaration, bound in lexical scope. */
+            hoisted = (Global *)calloc(1, sizeof(Global));
+            if (!hoisted) { fprintf(stderr, "out of memory\n"); exit(1); }
+            char unique[40];snprintf(unique,sizeof unique,"__local_static_%d",local_static_id++);
+            hoisted->name = xstrndup(unique,strlen(unique));
+            hoisted->len = strlen(unique);
+            hoisted->ty = ty;
+            hoisted->is_static = true;
+            hoisted->next = globals;
+            globals = hoisted;
             Node *g = new_node(ND_GVAR, name);
-            g->name = xstrndup(name->loc, (size_t)name->len);
+            g->name = hoisted->name;
             g->ty = ty;
             target = g;
         } else if (decl_is_extern) {
@@ -2017,7 +2017,7 @@ static Node *decl_stmt(void) {
             target = g;
         } else {
             /* 局部变量：栈槽按 align4(size) 分配 */
-            locals_bytes += (ty->size + 3) & ~3;
+            locals_bytes=checked_layout(locals_bytes,checked_layout(ty->size,0,4),4);
             Var *v = (Var *)calloc(1, sizeof(Var));
             if (!v) { fprintf(stderr, "out of memory\n"); exit(1); }
             v->name = name->loc;
@@ -2032,6 +2032,12 @@ static Node *decl_stmt(void) {
             target = vn;
         }
 
+        if(hoisted) {
+            Var *binding=calloc(1,sizeof(Var));
+            if(!binding){fprintf(stderr,"out of memory\n");exit(1);}
+            binding->name=name->loc;binding->len=name->len;binding->ty=ty;
+            binding->global_name=hoisted->name;binding->next=vars;vars=binding;
+        }
         if (inferred || tok_is(tok, "=")) {
             if (!inferred)
                 tok = tok->next;
@@ -2147,13 +2153,16 @@ static Node *stmt(void) {
         return n;
     }
     if (tok_is_kw(tok, "for")) {
+        Var *outer_vars=vars;
         Token *t = tok;
         tok = tok->next;
         skip("(");
         Node *init = NULL, *cond = NULL, *inc = NULL;
-        if (!tok_is(tok, ";"))
-            init = expr();
-        skip(";");
+        if(is_declspec_start(tok))init=decl_stmt();
+        else {
+            if (!tok_is(tok, ";"))init=expr();
+            skip(";");
+        }
         if (!tok_is(tok, ";"))
             cond = expr();
         skip(";");
@@ -2167,6 +2176,7 @@ static Node *stmt(void) {
         n->rhs = cond;
         n->els = inc;
         n->body = stmt();
+        vars=outer_vars;
         breakable_depth--;
         loop_depth--;
         return n;
@@ -2267,6 +2277,10 @@ static Node *stmt(void) {
         return n;
     }
     if (tok_is(tok, "{")) {
+        Var *outer_vars=vars;
+        TDef *outer_tdefs=tdefs;
+        EnumConst *outer_enums=enums;
+        Tag *outer_tags=tags;
         tok = tok->next;
         Node head = {0};
         Node *cur = &head;
@@ -2277,9 +2291,11 @@ static Node *stmt(void) {
             if (s) {
                 cur->next = s;
                 cur = s;
+                while(cur->next)cur=cur->next;
             }
         }
         skip("}");
+        vars=outer_vars;tdefs=outer_tdefs;enums=outer_enums;tags=outer_tags;
         return head.next;
     }
     if (tok_is(tok, ";")) {
@@ -2370,7 +2386,7 @@ static Func *funcdef(Type *fty, Token *t, bool is_static) {
             f->param_names[i] = fty->param_names[i];
         /* 建参数 Var */
         for (int i = 0; i < fty->nargs; i++) {
-            locals_bytes += (int)(((size_t)fty->param_tys[i]->size + 3) & ~3);
+            locals_bytes=checked_layout(locals_bytes,checked_layout(fty->param_tys[i]->size,0,4),4);
             Var *v = (Var *)calloc(1, sizeof(Var));
             if (!v) { fprintf(stderr, "out of memory\n"); exit(1); }
             v->name = fty->param_names[i];
@@ -2386,7 +2402,7 @@ static Func *funcdef(Type *fty, Token *t, bool is_static) {
             f->param_names[i] = fty->param_names[i];
             if (!f->param_names[i])
                 error_at(t, "parameter name missing in function definition");
-            locals_bytes += (int)(((size_t)fty->param_tys[i]->size + 3) & ~3);
+            locals_bytes=checked_layout(locals_bytes,checked_layout(fty->param_tys[i]->size,0,4),4);
             Var *v = (Var *)calloc(1, sizeof(Var));
             if (!v) { fprintf(stderr, "out of memory\n"); exit(1); }
             v->name = f->param_names[i];
@@ -2521,7 +2537,7 @@ static void init_bytes(Token **rest, Token *t, Type *ty,
 static void init_bytes(Token **rest, Token *t, Type *ty,
                        unsigned char *buf, int bufsz, Global *g) {
     if (ty->kind == TY_ARRAY) {
-        int64_t len = ty->array_len;
+        CcInt len = ty->array_len;
         if (t->kind == TK_STR && ty->base->kind == TY_CHAR) {
             if (t->str_len > len)
                 error_at(t, "string too long for array");
@@ -2533,7 +2549,7 @@ static void init_bytes(Token **rest, Token *t, Type *ty,
         if (!tok_is(t, "{"))
             error_at(t, "array initializer must be '{' or string");
         tok = t->next;
-        int64_t i;
+        CcInt i;
         for (i = 0; i < len; i++) {
             if (tok_is(tok, "}"))
                 break;
@@ -2565,7 +2581,7 @@ static void init_bytes(Token **rest, Token *t, Type *ty,
                 break;   /* 尾部逗号：{, 后无成员 */
             if (m->bit_width >= 0) {
                 /* 位域：读现有单元，or 入值 */
-                int64_t v = eval_const(&tok, tok);
+                CcInt v = eval_const(&tok, tok);
                 unsigned char *u = buf + m->offset;
                 uint32_t unit = ((uint32_t)u[0] << 24) | ((uint32_t)u[1] << 16) |
                                 ((uint32_t)u[2] << 8) | u[3];
@@ -2636,7 +2652,7 @@ static void init_bytes(Token **rest, Token *t, Type *ty,
      * 常数额折入加法数）。裸 ident 仅限函数/数组（名字退化为地址）。 */
     {
         Token *q = t;
-        int64_t addend = 0;
+        CcInt addend = 0;
         char *addrname = NULL;
         bool saw_addr = false;
         bool aok = true;
@@ -2696,14 +2712,14 @@ static void init_bytes(Token **rest, Token *t, Type *ty,
                 if (!gg && !find_func(qq)) { aok = false; break; }
                 Type *aty = gg ? gg->ty : NULL;
                 Token *qc = qq->next;
-                int64_t a = 0;
+                CcInt a = 0;
                 while (gg && (tok_is(qc, "[") || tok_is(qc, ".") || tok_is(qc, "->"))) {
                     if (tok_is(qc, "[")) {
                         if (aty->kind != TY_ARRAY)
                             error_at(qc, "subscript of non-array in address constant");
                         Token *sav = tok;
                         tok = qc->next;
-                        int64_t idx = eval_const(&tok, tok);
+                        CcInt idx = eval_const(&tok, tok);
                         qc = tok;
                         tok = sav;
                         if (!tok_is(qc, "]"))
@@ -2762,7 +2778,7 @@ static void init_bytes(Token **rest, Token *t, Type *ty,
                 p->kind = TK_EOF;
                 Token *sav = tok;
                 tok = q;
-                int64_t v = eval_const(&tok, tok);
+                CcInt v = eval_const(&tok, tok);
                 Token *endpos = tok;
                 p->kind = save_kind;
                 tok = sav;
@@ -2787,7 +2803,7 @@ static void init_bytes(Token **rest, Token *t, Type *ty,
             return;
         }
     }
-    int64_t v = eval_const(&tok, tok);
+    CcInt v = eval_const(&tok, tok);
     if (ty->kind == TY_CHAR) {
         buf[0] = (unsigned char)(v & 0xFF);
     } else if (ty->kind == TY_SHORT) {
@@ -2887,6 +2903,7 @@ Program *parse(Token *toks) {
     enums = NULL;
     tags = NULL;
     nstrings = 0;
+    local_static_id=0;
 
     /* 类型单例初始化 */
     ty_int = (Type *)calloc(1, sizeof(Type));

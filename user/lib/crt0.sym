@@ -1,0 +1,8 @@
+.text
+_start:
+    call main
+    push r1
+    call _exit
+user_hang:
+    jmp user_hang
+.sym _start T text 0 0

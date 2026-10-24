@@ -15,6 +15,13 @@
 #include "obj.h"
 
 typedef struct LinkError { char msg[256]; } LinkError;
+enum { SP_IMAGE_LEGACY, SP_IMAGE_KERNEL, SP_IMAGE_USER };
+typedef struct {
+    unsigned base, limit, branch_gate, syscall_gate;
+    int image_kind;
+} LinkOptions;
+bool symld_link_ex(Obj **, int, const char *, const LinkOptions *,
+                  FILE *, FILE *, LinkError *);
 
 bool symld_link(Obj **objs, int n, const char *crt0_path,
                 FILE *out_asm, FILE *out_bin, LinkError *err);

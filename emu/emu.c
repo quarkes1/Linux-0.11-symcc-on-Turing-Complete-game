@@ -10,6 +10,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "emu/emu.h"
+#include "runtime/platform.h"
 
 /* 与游戏 DiskA 组件容量一致（2026-08-20 用户实测设置：8MB） */
 #define DISK_SIZE (8 << 20)
@@ -38,7 +39,7 @@ static void set_reg(uint32_t *regs, int i, uint32_t v) {
     if (i > 0) regs[i] = v;
 }
 
-EmuResult emu_run(const uint8_t *bin, size_t bin_len, size_t ram_size, uint64_t max_instr) {
+EmuResult emu_run_ex(const uint8_t *bin, size_t bin_len, size_t ram_size, uint64_t max_instr, const EmuOptions *opt) {
     EmuResult r;
     uint32_t regs[16] = {0};
     uint32_t settings[8] = {0};
@@ -46,13 +47,17 @@ EmuResult emu_run(const uint8_t *bin, size_t bin_len, size_t ram_size, uint64_t 
     uint64_t pc = 0;
     uint64_t n = 0;
     int error = 0;
+    size_t key_index = 0;
+    uint32_t time_high = 0;
+    uint32_t ram_mask=opt && opt->ram_address_mask?opt->ram_address_mask:UINT32_MAX;
+    uint32_t disk_mask=opt && opt->disk_address_mask?opt->disk_address_mask:UINT32_MAX;
 
     memset(&r, 0, sizeof r);
     if (ram_size < 1) ram_size = 1;
     r.mem = (uint8_t *)calloc(ram_size, 1);
     r.mem_size = ram_size;
-    r.disk = (uint8_t *)calloc(DISK_SIZE, 1);
-    r.disk_size = DISK_SIZE;
+    r.disk_size = opt && opt->disk_len>DISK_SIZE ? SP_DISK_BYTES : DISK_SIZE;
+    r.disk = (uint8_t *)calloc(r.disk_size, 1);
     if (!r.mem || !r.disk) {
         error = 2;
         goto done;
@@ -62,30 +67,61 @@ EmuResult emu_run(const uint8_t *bin, size_t bin_len, size_t ram_size, uint64_t 
         goto done;
     }
     memcpy(r.mem, bin, bin_len);
+    if (opt && opt->disk_len) {
+        if (!opt->disk || opt->disk_len > SP_DISK_BYTES) { error = 2; goto done; }
+        memcpy(r.disk, opt->disk, opt->disk_len);
+    }
 
     while (n++ < max_instr) {
         uint32_t w;
+        uint64_t address=0,fetch;
         int b0, a, b, c;
+        r.instructions = n - 1;
+        if (opt && opt->observe && ((n - 1) % 1024 == 0)) {
+            memcpy(r.regs, regs, sizeof regs);
+            memcpy(r.settings, settings, sizeof settings);
+            if (opt->observe(&r, n - 1, opt->opaque)) { r.stop_reason = 1; goto done; }
+        }
 
-        if (pc + 4 > ram_size) { error = 2; break; }
-        w = rd32(r.mem + pc);
+        fetch=ram_mask==UINT32_MAX?pc:(pc&ram_mask);
+        if (fetch + 4 > ram_size) { error = 2; break; }
+        w = rd32(r.mem + fetch);
         b0 = (int)(w >> 24);
         a = (int)((w >> 20) & 0xF);
         b = (int)((w >> 16) & 0xF);
         c = (int)((w >> 8) & 0xF);
+
+        if((b0&0xf8)==0x60)address=regs[c]&((b0&3)==3?disk_mask:ram_mask);
+        else if((b0&0xf8)==0x70)address=(w&0xffff)&((b0&3)==3?disk_mask:ram_mask);
 
         switch (b0) {
         /* ---------- IO ---------- */
         case 0x00: break;                   /* nop */
         case 0x01: set_reg(regs, a, 0); break;                  /* in */
         case 0x02: printf("OUT %u\n", regs[(w >> 8) & 0xF]); break; /* out reg */
-        case 0x03: set_reg(regs, a, 0); break;                  /* keyboard（空 FIFO） */
-        case 0x04: settings[(w >> 16) & 0xF] = regs[(w >> 8) & 0xF]; break;
-        case 0x05: set_reg(regs, a, 0); break;                  /* time_0 */
-        case 0x06: set_reg(regs, a, 0); break;                  /* time_1 */
+        case 0x03: {
+            uint32_t key = 0;
+            if (opt && key_index < opt->n_events &&
+                opt->events[key_index].at_instruction <= n - 1)
+                key = opt->events[key_index++].key;
+            else if (opt && !opt->n_events && opt->keyboard)
+                key = opt->keyboard(opt->opaque);
+            set_reg(regs, a, key); break;
+        }
+        case 0x04:
+            if (regs[(w >> 16) & 0xF] >= 8) { error = 2; goto done; }
+            settings[regs[(w >> 16) & 0xF]] = regs[(w >> 8) & 0xF]; break;
+        case 0x05: {
+            uint64_t ns = opt ? (n - 1) * opt->ns_per_instruction : 0;
+            time_high = (uint32_t)(ns >> 32);
+            set_reg(regs, a, (uint32_t)ns); break;
+        }
+        case 0x06: set_reg(regs, a, time_high); break;
         case 0x07: set_reg(regs, a, (uint32_t)pc); break;       /* counter=自身地址 */
         case 0x10: printf("OUT %u\n", w & 0xFFFF); break;       /* out imm */
-        case 0x14: settings[(w >> 16) & 0xF] = w & 0xFFFF; break;
+        case 0x14:
+            if (regs[(w >> 16) & 0xF] >= 8) { error = 2; goto done; }
+            settings[regs[(w >> 16) & 0xF]] = w & 0xFFFF; break;
 
         /* ---------- ALU reg（mov/neg/not 别名并入母指令） ---------- */
         case 0x20: set_reg(regs, a, ~(regs[b] & regs[c])); break;    /* nand */
@@ -147,26 +183,26 @@ EmuResult emu_run(const uint8_t *bin, size_t bin_len, size_t ram_size, uint64_t 
          * load_* %dest, [%adr]：dest@20-23(a)，adr@8-11(c)
          * store_* [%adr], %value：adr@8-11(c)，value@16-19(b)
          * 越界检查用 uint64 加法防 32 位回绕（如 sp 未初始化时 sp-4 = 0xFFFFFFFC） */
-        case 0x60: if ((uint64_t)regs[c] >= ram_size) { error = 2; goto done; } set_reg(regs, a, r.mem[regs[c]]); break;
-        case 0x61: if ((uint64_t)regs[c] + 2 > ram_size) { error = 2; goto done; } set_reg(regs, a, rd16(r.mem + regs[c])); break;
-        case 0x62: if ((uint64_t)regs[c] + 4 > ram_size) { error = 2; goto done; } set_reg(regs, a, rd32(r.mem + regs[c])); break;
-        case 0x63: if ((uint64_t)regs[c] + 4 > r.disk_size) { error = 2; goto done; } set_reg(regs, a, rd32(r.disk + regs[c])); break; /* pload */
-        case 0x64: if ((uint64_t)regs[c] >= ram_size) { error = 2; goto done; } r.mem[regs[c]] = (uint8_t)regs[b]; break;
-        case 0x65: if ((uint64_t)regs[c] + 2 > ram_size) { error = 2; goto done; } wr16(r.mem + regs[c], (uint16_t)regs[b]); break;
-        case 0x66: if ((uint64_t)regs[c] + 4 > ram_size) { error = 2; goto done; } wr32(r.mem + regs[c], regs[b]); break;
-        case 0x67: if ((uint64_t)regs[c] + 4 > r.disk_size) { error = 2; goto done; } wr32(r.disk + regs[c], regs[b]); break; /* pstore */
+        case 0x60: if ((uint64_t)address >= ram_size) { error = 2; goto done; } set_reg(regs, a, r.mem[address]); break;
+        case 0x61: if ((uint64_t)address + 2 > ram_size) { error = 2; goto done; } set_reg(regs, a, rd16(r.mem + address)); break;
+        case 0x62: if ((uint64_t)address + 4 > ram_size) { error = 2; goto done; } set_reg(regs, a, rd32(r.mem + address)); break;
+        case 0x63: if ((uint64_t)address + 4 > r.disk_size) { error = 2; goto done; } set_reg(regs, a, rd32(r.disk + address)); break; /* pload */
+        case 0x64: if ((uint64_t)address >= ram_size) { error = 2; goto done; } r.mem[address] = (uint8_t)regs[b]; break;
+        case 0x65: if ((uint64_t)address + 2 > ram_size) { error = 2; goto done; } wr16(r.mem + address, (uint16_t)regs[b]); break;
+        case 0x66: if ((uint64_t)address + 4 > ram_size) { error = 2; goto done; } wr32(r.mem + address, regs[b]); break;
+        case 0x67: if ((uint64_t)address + 4 > r.disk_size) { error = 2; goto done; } wr32(r.disk + address, regs[b]); break; /* pstore */
 
         /* ---------- load/store imm 寻址 ----------
          * load_* %dest, [%adr]：dest@20-23(a)，adr imm@0-15
          * store_* [%adr], %value：adr imm@0-15，value@16-19(b) */
-        case 0x70: if ((w & 0xFFFF) >= ram_size) { error = 2; goto done; } set_reg(regs, a, r.mem[w & 0xFFFF]); break;
-        case 0x71: if ((w & 0xFFFF) + 2 > ram_size) { error = 2; goto done; } set_reg(regs, a, rd16(r.mem + (w & 0xFFFF))); break;
-        case 0x72: if ((w & 0xFFFF) + 4 > ram_size) { error = 2; goto done; } set_reg(regs, a, rd32(r.mem + (w & 0xFFFF))); break;
-        case 0x73: if ((w & 0xFFFF) + 4 > r.disk_size) { error = 2; goto done; } set_reg(regs, a, rd32(r.disk + (w & 0xFFFF))); break;
-        case 0x74: if ((w & 0xFFFF) >= ram_size) { error = 2; goto done; } r.mem[w & 0xFFFF] = (uint8_t)regs[b]; break;
-        case 0x75: if ((w & 0xFFFF) + 2 > ram_size) { error = 2; goto done; } wr16(r.mem + (w & 0xFFFF), (uint16_t)regs[b]); break;
-        case 0x76: if ((w & 0xFFFF) + 4 > ram_size) { error = 2; goto done; } wr32(r.mem + (w & 0xFFFF), regs[b]); break;
-        case 0x77: if ((w & 0xFFFF) + 4 > r.disk_size) { error = 2; goto done; } wr32(r.disk + (w & 0xFFFF), regs[b]); break;
+        case 0x70: if (address >= ram_size) { error = 2; goto done; } set_reg(regs, a, r.mem[address]); break;
+        case 0x71: if (address + 2 > ram_size) { error = 2; goto done; } set_reg(regs, a, rd16(r.mem + address)); break;
+        case 0x72: if (address + 4 > ram_size) { error = 2; goto done; } set_reg(regs, a, rd32(r.mem + address)); break;
+        case 0x73: if (address + 4 > r.disk_size) { error = 2; goto done; } set_reg(regs, a, rd32(r.disk + address)); break;
+        case 0x74: if (address >= ram_size) { error = 2; goto done; } r.mem[address] = (uint8_t)regs[b]; break;
+        case 0x75: if (address + 2 > ram_size) { error = 2; goto done; } wr16(r.mem + address, (uint16_t)regs[b]); break;
+        case 0x76: if (address + 4 > ram_size) { error = 2; goto done; } wr32(r.mem + address, regs[b]); break;
+        case 0x77: if (address + 4 > r.disk_size) { error = 2; goto done; } wr32(r.disk + address, regs[b]); break;
 
         default:
             error = 3;                      /* 未知 opcode（不该发生） */
@@ -180,7 +216,12 @@ halt:
     r.exit_code = (int)regs[1];
 done:
     r.error = error;
+    if (error) r.stop_reason = error == 1 ? 2 : 3;
     memcpy(r.regs, regs, sizeof regs);
     memcpy(r.settings, settings, sizeof settings);
     return r;
+}
+
+EmuResult emu_run(const uint8_t *bin, size_t len, size_t ram, uint64_t limit) {
+    return emu_run_ex(bin, len, ram, limit, NULL);
 }

@@ -124,7 +124,8 @@ static struct buffer_head * find_entry(struct m_inode ** dir,
 			}
 		}
 	}
-	if (!(block = (*dir)->i_zone[0]))
+    /* SYMPLUS-PORT: directory blocks need the same zone validation as files. */
+	if ((block = bmap(*dir,0))<=0)
 		return NULL;
 	if (!(bh = bread((*dir)->i_dev,block)))
 		return NULL;
@@ -134,10 +135,9 @@ static struct buffer_head * find_entry(struct m_inode ** dir,
 		if ((char *)de >= BLOCK_SIZE+bh->b_data) {
 			brelse(bh);
 			bh = NULL;
-			if (!(block = bmap(*dir,i/DIR_ENTRIES_PER_BLOCK)) ||
+			if ((block = bmap(*dir,i/DIR_ENTRIES_PER_BLOCK))<=0 ||
 			    !(bh = bread((*dir)->i_dev,block))) {
-				i += DIR_ENTRIES_PER_BLOCK;
-				continue;
+                return NULL;
 			}
 			de = (struct dir_entry *) bh->b_data;
 		}
@@ -179,7 +179,7 @@ static struct buffer_head * add_entry(struct m_inode * dir,
 #endif
 	if (!namelen)
 		return NULL;
-	if (!(block = dir->i_zone[0]))
+	if ((block = bmap(dir,0))<=0)
 		return NULL;
 	if (!(bh = bread(dir->i_dev,block)))
 		return NULL;
@@ -190,11 +190,10 @@ static struct buffer_head * add_entry(struct m_inode * dir,
 			brelse(bh);
 			bh = NULL;
 			block = create_block(dir,i/DIR_ENTRIES_PER_BLOCK);
-			if (!block)
+			if (block<=0)
 				return NULL;
 			if (!(bh = bread(dir->i_dev,block))) {
-				i += DIR_ENTRIES_PER_BLOCK;
-				continue;
+                return NULL;
 			}
 			de = (struct dir_entry *) bh->b_data;
 		}
@@ -548,8 +547,8 @@ static int empty_dir(struct m_inode * inode)
 	struct dir_entry * de;
 
 	len = inode->i_size / sizeof (struct dir_entry);
-	if (len<2 || !inode->i_zone[0] ||
-	    !(bh=bread(inode->i_dev,inode->i_zone[0]))) {
+	if (len<2 || (block=bmap(inode,0))<=0 ||
+	    !(bh=bread(inode->i_dev,block))) {
 	    	printk("warning - bad directory on dev %04x\n",inode->i_dev);
 		return 0;
 	}
@@ -565,9 +564,8 @@ static int empty_dir(struct m_inode * inode)
 		if ((void *) de >= (void *) (bh->b_data+BLOCK_SIZE)) {
 			brelse(bh);
 			block=bmap(inode,nr/DIR_ENTRIES_PER_BLOCK);
-			if (!block) {
-				nr += DIR_ENTRIES_PER_BLOCK;
-				continue;
+			if (block<=0) {
+                return 0;
 			}
 			if (!(bh=bread(inode->i_dev,block)))
 				return 0;
@@ -716,6 +714,48 @@ int sys_unlink(const char * name)
 	iput(inode);
 	iput(dir);
 	return 0;
+}
+
+/* SYMPLUS-PORT: regular-file publication on one filesystem. The cooperative
+ * dispatcher cannot switch processes inside this commit. No fallible lookup
+ * remains after the destination entry has been obtained. */
+int sys_rename(const char *oldname,const char *newname)
+{
+    const char *oname,*nname;
+    int olen,nlen,result=-ENOENT;
+    struct m_inode *od=NULL,*nd=NULL,*src=NULL,*dst=NULL;
+    struct buffer_head *ob=NULL,*nb=NULL;
+    struct dir_entry *oe,*ne;
+    od=dir_namei(oldname,&olen,&oname);
+    nd=dir_namei(newname,&nlen,&nname);
+    if(!od || !nd || !olen || !nlen)goto out;
+    if(olen>NAME_LEN || nlen>NAME_LEN){result=-ENAMETOOLONG;goto out;}
+    if(od->i_dev!=nd->i_dev){result=-EXDEV;goto out;}
+    if(!permission(od,MAY_WRITE) || !permission(nd,MAY_WRITE)){result=-EACCES;goto out;}
+    ob=find_entry(&od,oname,olen,&oe);if(!ob)goto out;
+    src=iget(od->i_dev,oe->inode);if(!src)goto out;
+    if(!S_ISREG(src->i_mode)){result=-EPERM;goto out;}
+    if(src->i_dev!=nd->i_dev){result=-EXDEV;goto out;}
+    if((od->i_mode&S_ISVTX) && !suser() && current->euid!=od->i_uid && current->euid!=src->i_uid){result=-EPERM;goto out;}
+    nb=find_entry(&nd,nname,nlen,&ne);
+    if(nb) {
+        dst=iget(nd->i_dev,ne->inode);if(!dst)goto out;
+        if(dst==src){result=0;goto out;}
+        if(!S_ISREG(dst->i_mode)){result=-EPERM;goto out;}
+        if((nd->i_mode&S_ISVTX) && !suser() && current->euid!=nd->i_uid && current->euid!=dst->i_uid){result=-EPERM;goto out;}
+    } else {
+        nb=add_entry(nd,nname,nlen,&ne);
+        if(!nb){result=-ENOSPC;goto out;}
+    }
+    ne->inode=src->i_num;oe->inode=0;
+    nb->b_dirt=1;ob->b_dirt=1;
+    od->i_ctime=od->i_mtime=nd->i_ctime=nd->i_mtime=CURRENT_TIME;
+    od->i_dirt=nd->i_dirt=1;src->i_ctime=CURRENT_TIME;src->i_dirt=1;
+    if(dst){dst->i_nlinks--;dst->i_ctime=CURRENT_TIME;dst->i_dirt=1;}
+    result=0;
+out:
+    brelse(nb);brelse(ob);iput(dst);iput(src);iput(nd);iput(od);
+    return result;
 }
 
 int sys_link(const char * oldname, const char * newname)
