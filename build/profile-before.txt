@@ -1,0 +1,28 @@
+stop=2 error=1 instructions=19999999999
+scpp: 366592
+scc1: 0
+sld: 0
+other: 87040
+kernel: 19999546368
+       84992 scpp/heap:calloc
+       69632 scpp/divsi3:__divsi3
+       51200 scpp/base:strlen
+       34816 scpp/tokenize:tokenize
+       29696 scpp/tokenize:is_punct2
+       20480 scpp/preprocess:phase12
+       17408 scpp/heap:malloc
+        8192 scpp/string:strncmp
+        7168 scpp/stdio:fgetc
+        7168 scpp/tokenize:is_punct3
+        7168 scpp/tokenize:is_punct1
+        6144 scpp/heap:heap_break
+        6144 scpp/stdio:fread
+        5120 scpp/string:isalpha
+        2048 scpp/format:vsnprintf
+        2048 scpp/string:isalnum
+        2048 scpp/format:out
+        1024 scpp/tokenize:tok_is
+        1024 scpp/base:sp_brk
+        1024 scpp/preprocess:do_include
+        1024 scpp/tokenize:new_token
+        1024 scpp/format:vfprintf

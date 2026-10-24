@@ -1,0 +1,55 @@
+stop=1 error=0 instructions=3195177984
+tmp                                                                                             
+casymplus:t/ $ >test.c <<eof                                                                    
+symplus:#/tmpi$ nclud> e <stdio.h>                                                              
+i> nt main(void){printf("test\n");return 0;}                                                    
+e> of                                                                                           
+symcc test.c -o test symplus:&/tmp&$  ./test                                                    
+echo profile done                                                                               
+test                                                                                            
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+scpp: 12899328
+scc1: 14621696
+sld: 2458247168
+other: 78848
+kernel: 709331968
+   528663552 sld/base:strcmp
+   268949504 sld/format:sscanf
+   165188608 sld/base:strlen
+   154096640 sld/asm:next_line
+   148972544 sld/asm:emit_insn
+   131164160 sld/isa:isa_reg_index
+    82560000 sld/link_image:resolve
+    79629312 sld/string:strchr
+    63566848 sld/link_image:add
+    61863936 sld/obj:obj_read
+    57720832 sld/asm:parse_operands
+    57077760 sld/link_image:cond
+    52938752 sld/asm:trim
+    51116032 sld/format:vsnprintf
+    50290688 sld/string:strncmp
+    47489024 sld/string:isspace
+    45673472 sld/base:strcpy
+    40598528 sld/string:memcpy
+    39670784 sld/format:out
+    39650304 sld/stdio:fgetc
+    33953792 sld/link_image:line
+    32061440 sld/heap:malloc
+    25826304 sld/string:isdigit
+    22535168 sld/asm:emit_data
+    22209536 sld/asm:process_line

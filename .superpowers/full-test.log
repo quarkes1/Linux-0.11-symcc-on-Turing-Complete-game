@@ -1,0 +1,249 @@
+gcc -O0 -g -Wall -Wextra -I. -o tests/user_link_test.exe tests/user_link_test.c symcc/src/tokenize.c symcc/src/parse.c symcc/src/codegen.c symcc/src/compile.c symcc/src/preprocess.c symcc/src/obj.c symcc/src/link.c symcc/src/link_image.c emu/isa.c emu/asm.c emu/emu.c
+bash scripts/build_kernel.sh --m3
+M3 KERNEL BUILD OK
+bash scripts/build_system.sh
+C:/Users/19444/Desktop/TuringComplete/build/rootfs.bin: 8388608 bytes
+INTERACTIVE SYSTEM BUILD OK
+tests/asm_test.exe
+PASS add reg (4 bytes)
+PASS add imm (4 bytes)
+PASS label+jmp (8 bytes)
+PASS data+str (6 bytes)
+PASS pseudos (52 bytes)
+PASS imm too large (error line 1: immediate/label too large: 0x10000 (>0xFFFF))
+PASS undefined label (error line 1: undefined label 'nowhere')
+PASS bad mnemonic (error line 1: unknown instruction 'frobnicate' or bad operands)
+PASS bad operand count (error line 1: unknown instruction 'add' or bad operands)
+PASS comment+char (4 bytes)
+PASS load imm (4 bytes)
+PASS store reg (4 bytes)
+ALL PASS (10 checks)
+tests/emu_test.exe
+ALL PASS
+tests/run_tests.exe
+PASS tests/test_tick.c (exit=0)
+PASS tests/test_kernel_format.c (exit=0)
+PASS tests/test_kernel_varargs.c (exit=0)
+PASS tests/test_narrow_args.c (exit=0)
+PASS tests/test_logical.c (exit=0)
+PASS tests/test_disk_layout.c (exit=0)
+PASS tests/test_arith.c (exit=7)
+PASS tests/test_locals.c (exit=13)
+PASS tests/test_control.c (exit=100)
+PASS tests/test_fun.c (exit=162)
+PASS tests/test_ptr.c (exit=15)
+PASS tests/test_char.c (exit=66)
+PASS tests/test_div.c (exit=1)
+PASS tests/test_udiv.c (exit=1)
+PASS tests/test_hello.c (exit=42)
+PASS tests/test_typedef_enum.c (exit=15)
+PASS tests/test_struct.c (exit=8)
+PASS tests/test_bitfield.c (exit=72)
+PASS tests/test_array.c (exit=15)
+PASS tests/test_init.c (exit=150)
+PASS tests/test_fnptr.c (exit=7)
+PASS tests/test_static_local.c (exit=21)
+PASS tests/test_sizeof_cast.c (exit=69)
+PASS tests/test_char_literal.c (exit=66)
+PASS tests/test_hex_octal.c (exit=24)
+PASS tests/test_bitwise.c (exit=814)
+PASS tests/test_compound_assign.c (exit=31)
+PASS tests/test_inc_dec.c (exit=28)
+PASS tests/test_ternary_comma.c (exit=100)
+PASS tests/test_sizeof.c (exit=56)
+PASS tests/test_break_continue_do.c (exit=7)
+PASS tests/test_break_while_for.c (exit=27)
+PASS tests/test_switch.c (exit=25)
+PASS tests/test_goto.c (exit=15)
+PASS tests/test_struct_abi.c (exit=170)
+ALL TESTS PASSED
+tests/preproc_test.exe
+preproc_test: 30 passed, 0 failed
+tests/link_test.exe
+link_test: 53 passed, 0 failed
+tests/kernel_boot_test.exe
+PASS kernel_boot (11-line boot log on screen)
+tests/platform_test.exe
+tests/emu_io_test.exe
+tests/user_link_test.exe
+tests/shell_test.exe
+stop=1 error=0 instructions=130817024
+SymphonyPlus Linux: interactive boot                                                            
+DiskA driver ready                                                                              
+Block cache ready                                                                               
+8041/8192 free blocks                                                                           
+110/128 free inodes                                                                             
+DiskA MINIX root mounted                                                                        
+Welcome to SymphonyPlus Linux.                                                                  
+symplus$ ls /bin                                                                                
+.  ..  cat  echo  execprobe  forktest  init  ls  proctest  ps  regtest  sh  sync                
+symplus$ cat /etc/motd                                                                          
+Welcome to SymphonyPlus Linux.                                                                  
+symplus$ echo hello                                                                             
+hello                                                                                           
+symplus$ forktest                                                                               
+FORK PASS                                                                                       
+symplus$ nosuchcommand                                                                          
+nosuchcommand: not found                                                                        
+symplus$ echo abC                                                                               
+abC                                                                                             
+symplus$ cd /etc                                                                                
+symplus$ cat motd                                                                               
+Welcome to SymphonyPlus Linux.                                                                  
+symplus$ exit                                                                                   
+symplus$ echo finished                                                                          
+finished                                                                                        
+symplus$                                                                                        
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+tests/shell_test.exe --process
+stop=1 error=0 instructions=614581248
+SymphonyPlus Linux: interactive boot                                                            
+DiskA driver ready                                                                              
+Block cache ready                                                                               
+8041/8192 free blocks                                                                           
+110/128 free inodes                                                                             
+DiskA MINIX root mounted                                                                        
+Welcome to SymphonyPlus Linux.                                                                  
+symplus$ regtest                                                                                
+REG PASS                                                                                        
+symplus$ proctest                                                                               
+ORPHAN PASS                                                                                     
+PROC PASS                                                                                       
+symplus$ execprobe                                                                              
+EXEC PASS                                                                                       
+symplus$ echo finished                                                                          
+finished                                                                                        
+symplus$                                                                                        
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+tests/shell_test.exe --stress
+stop=1 error=0 instructions=1228236800
+line081                                                                                         
+symplus$ echo line082                                                                           
+line082                                                                                         
+symplus$ echo line083                                                                           
+line083                                                                                         
+symplus$ echo line084                                                                           
+line084                                                                                         
+symplus$ echo line085                                                                           
+line085                                                                                         
+symplus$ echo line086                                                                           
+line086                                                                                         
+symplus$ echo line087                                                                           
+line087                                                                                         
+symplus$ echo line088                                                                           
+line088                                                                                         
+symplus$ echo line089                                                                           
+line089                                                                                         
+symplus$ echo line090                                                                           
+line090                                                                                         
+symplus$ echo line091                                                                           
+line091                                                                                         
+symplus$ echo line092                                                                           
+line092                                                                                         
+symplus$ echo line093                                                                           
+line093                                                                                         
+symplus$ echo line094                                                                           
+line094                                                                                         
+symplus$ echo line095                                                                           
+line095                                                                                         
+symplus$ echo line096                                                                           
+line096                                                                                         
+symplus$ echo line097                                                                           
+line097                                                                                         
+symplus$ echo line098                                                                           
+line098                                                                                         
+symplus$ echo line099                                                                           
+line099                                                                                         
+symplus$ echo stressdone                                                                        
+stressdone                                                                                      
+symplus$                                                                                        
+tests/shell_test.exe --tty
+stop=1 error=0 instructions=93997056
+SymphonyPlus Linux: interactive boot                                                            
+DiskA driver ready                                                                              
+Block cache ready                                                                               
+8041/8192 free blocks                                                                           
+110/128 free inodes                                                                             
+DiskA MINIX root mounted                                                                        
+Welcome to SymphonyPlus Linux.                                                                  
+symplus$ echo xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx                         
+line too long                                                                                   
+symplus$ echo aftertty                                                                          
+aftertty                                                                                        
+symplus$                                                                                        
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+tests/tick_test.exe
+python -m unittest discover -s tests -p test_mkrootfs.py
+.
+----------------------------------------------------------------------
+Ran 1 test in 0.004s
+
+OK
+python -m unittest discover -s tests -p test_emu_cli.py
+.......
+----------------------------------------------------------------------
+Ran 7 tests in 11.723s
+
+OK

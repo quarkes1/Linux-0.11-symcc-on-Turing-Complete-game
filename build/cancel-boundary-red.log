@@ -1,0 +1,41 @@
+stop=2 error=1 instructions=4999999999
+symplus:/$ cat >/tmp/keep.c <<E                                                                 
+> int main(void){return 0;}                                                                     
+> E                                                                                             
+symplus:/$ symcc /tmp/keep.c -o /bin/echo && echo BAD;echo BAD                                  
+symcc: preprocessing                                                                            
+symcc: compiling                                                                                
+symcc: linking                                                                                  
+^C                                                                                              
+symcc: compilation failed                                                                       
+symplus:/$ /bin/echo KEPT                                                                       
+KEPT                                                                                            
+symplus:/$ intprobe defer                                                                       
+LOOP READY                                                                                      
+^C                                                                                              
+BAD                                                                                             
+symplus:/$ /bin/echo KEPT2                                                                      
+/bin/echo: not found                                                                            
+symplus:/$ ls -a /tmp                                                                           
+.  ..                                                                                           
+symplus:/$ echo interruptdone                                                                   
+echo: not found                                                                                 
+symplus:/$                                                                                      
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                

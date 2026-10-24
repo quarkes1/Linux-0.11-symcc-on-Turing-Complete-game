@@ -1,0 +1,16 @@
+{
+  "workload": "boot; create test.c through heredoc; symcc test.c -o test && ./test; stop on output row test",
+  "source": "#include <stdio.h>\nint main(void){printf(\"test\\n\");return 0;}\n",
+  "baseline_instructions": 8723272704,
+  "allocator_only_instructions": 3195177984,
+  "final_instructions": 3978405888,
+  "instruction_reduction_percent": 54.39319595986346,
+  "speedup_ratio": 2.192655286961007,
+  "game_verified": false,
+  "game_19MHz_one_cycle_per_instruction_minutes": 3.4898297263157896,
+  "stage_samples_granularity": 1024,
+  "images": {
+    "kernel.bin": "dcb023bd0d503eb51666da05c8f3353303501e8bfc54a8892563c1fd0dd278be",
+    "rootfs.bin": "0b0158529fccfcb6c22183a21b2914e3c247149c1d0be2d4c19d23f5df0c8763"
+  }
+}

@@ -1,0 +1,55 @@
+stop=1 error=0 instructions=3978405888
+mp                                                                                              
+cat symplus:>/t$ est.c <<eof                                                                    
+#insymplus:c/tmpl$ ude <> stdio.h>                                                              
+in> t main(void){printf("test\n");return 0;}                                                    
+eo> f                                                                                           
+symcc test.c -o test && .symplus://tmpt$ est                                                    
+echo profile symcc: dpreprocessingo                                                             
+ne                                                                                              
+symcc: compiling                                                                                
+symcc: linking                                                                                  
+test                                                                                            
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+scpp: 14224384
+scc1: 16153600
+sld: 3060059136
+other: 84992
+kernel: 887884800
+   712478720 sld/base:strcmp
+   292070400 sld/format:sscanf
+   216129536 sld/base:strlen
+   183437312 sld/asm:next_line
+   177227776 sld/asm:emit_insn
+   172655616 sld/isa:isa_reg_index
+   131188736 sld/link_image:resolve
+   101326848 sld/string:strchr
+    87738368 sld/link_image:add
+    69775360 sld/asm:parse_operands
+    68340736 sld/asm:trim
+    66008064 sld/obj:obj_read
+    64756736 sld/string:strncmp
+    61438976 sld/link_image:cond
+    60684288 sld/format:vsnprintf
+    58516480 sld/base:strcpy
+    54250496 sld/string:isspace
+    50825216 sld/string:memcpy
+    48135168 sld/format:out
+    42604544 sld/stdio:fgetc
+    37870592 sld/heap:malloc
+    35857408 sld/link_image:line
+    30315520 sld/string:isdigit
+    27606016 sld/asm:emit_data
+    26946560 sld/asm:process_line

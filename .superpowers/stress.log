@@ -1,0 +1,41 @@
+line081                                                                                         
+symplus$ echo line082                                                                           
+line082                                                                                         
+symplus$ echo line083                                                                           
+line083                                                                                         
+symplus$ echo line084                                                                           
+line084                                                                                         
+symplus$ echo line085                                                                           
+line085                                                                                         
+symplus$ echo line086                                                                           
+line086                                                                                         
+symplus$ echo line087                                                                           
+line087                                                                                         
+symplus$ echo line088                                                                           
+line088                                                                                         
+symplus$ echo line089                                                                           
+line089                                                                                         
+symplus$ echo line090                                                                           
+line090                                                                                         
+symplus$ echo line091                                                                           
+line091                                                                                         
+symplus$ echo line092                                                                           
+line092                                                                                         
+symplus$ echo line093                                                                           
+line093                                                                                         
+symplus$ echo line094                                                                           
+line094                                                                                         
+symplus$ echo line095                                                                           
+line095                                                                                         
+symplus$ echo line096                                                                           
+line096                                                                                         
+stop=1 error=0 instructions=1218052096
+symplus$ echo line097                                                                           
+line097                                                                                         
+symplus$ echo line098                                                                           
+line098                                                                                         
+symplus$ echo line099                                                                           
+line099                                                                                         
+symplus$ echo stressdone                                                                        
+stressdone                                                                                      
+symplus$                                                                                        

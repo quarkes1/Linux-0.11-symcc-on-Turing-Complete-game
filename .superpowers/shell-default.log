@@ -1,0 +1,41 @@
+stop=1 error=0 instructions=129363968
+SymphonyPlus Linux: interactive boot                                                            
+DiskA driver ready                                                                              
+Block cache ready                                                                               
+8067/8192 free blocks                                                                           
+112/128 free inodes                                                                             
+DiskA MINIX root mounted                                                                        
+Welcome to SymphonyPlus Linux.                                                                  
+symplus$ ls /bin                                                                                
+.  ..  cat  echo  execprobe  forktest  init  ls  proctest  ps  sh                               
+symplus$ cat /etc/motd                                                                          
+Welcome to SymphonyPlus Linux.                                                                  
+symplus$ echo hello                                                                             
+hello                                                                                           
+symplus$ forktest                                                                               
+FORK PASS                                                                                       
+symplus$ nosuchcommand                                                                          
+nosuchcommand: not found                                                                        
+symplus$ echo abC                                                                               
+abC                                                                                             
+symplus$ cd /etc                                                                                
+symplus$ cat motd                                                                               
+Welcome to SymphonyPlus Linux.                                                                  
+symplus$ exit                                                                                   
+symplus$ echo finished                                                                          
+finished                                                                                        
+symplus$                                                                                        
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                

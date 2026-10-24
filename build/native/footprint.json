@@ -1,0 +1,26 @@
+{
+  "scpp": {
+    "loaded": 236849,
+    "bss": 675,
+    "stack_reserved": 65536,
+    "heap_peak_committed": 71760,
+    "window_bytes": 2097152,
+    "within_budget": true
+  },
+  "scc1": {
+    "loaded": 442044,
+    "bss": 912,
+    "stack_reserved": 65536,
+    "heap_peak_committed": 97672,
+    "window_bytes": 2097152,
+    "within_budget": true
+  },
+  "sld": {
+    "loaded": 209348,
+    "bss": 156,
+    "stack_reserved": 65536,
+    "heap_peak_committed": 1369032,
+    "window_bytes": 2097152,
+    "within_budget": true
+  }
+}

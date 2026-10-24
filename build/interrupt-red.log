@@ -1,0 +1,41 @@
+stop=2 error=1 instructions=499999999
+symplus:/$ echo BADcecho cancelok                                                               
+BADcecho cancelok                                                                               
+symplus:/$ intprobe for;echo BAD                                                                
+intprobe: not found                                                                             
+BAD                                                                                             
+symplus:/$ cecho forok                                                                          
+cecho: not found                                                                                
+symplus:/$ intprobe while                                                                       
+intprobe: not found                                                                             
+symplus:/$ cecho whileok                                                                        
+cecho: not found                                                                                
+symplus:/$ intprobe do                                                                          
+intprobe: not found                                                                             
+symplus:/$ cecho dook                                                                           
+cecho: not found                                                                                
+symplus:/$ intprobe goto                                                                        
+intprobe: not found                                                                             
+symplus:/$ cecho gotook                                                                         
+cecho: not found                                                                                
+symplus:/$ cat                                                                                  
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                

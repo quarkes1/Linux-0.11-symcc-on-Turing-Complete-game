@@ -1,0 +1,7 @@
+cd /tmp
+cat >test.c <<EOF
+#include <stdio.h>
+int main(void){printf("test\n");return 0;}
+EOF
+symcc test.c -o test && ./test
+echo PROFILE DONE

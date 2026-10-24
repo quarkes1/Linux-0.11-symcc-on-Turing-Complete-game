@@ -1,0 +1,41 @@
+stop=1 error=0 instructions=242271232
+symplus:/$ echo BAD^C                                                                           
+symplus:/$ echo cancelok                                                                        
+cancelok                                                                                        
+symplus:/$ intprobe for;echo BAD                                                                
+LOOP READY                                                                                      
+^C                                                                                              
+symplus:/$ echo forok                                                                           
+forok                                                                                           
+symplus:/$ intprobe while                                                                       
+LOOP READY                                                                                      
+^C                                                                                              
+symplus:/$ echo whileok                                                                         
+whileok                                                                                         
+symplus:/$ intprobe do                                                                          
+LOOP READY                                                                                      
+^C                                                                                              
+symplus:/$ echo dook                                                                            
+dook                                                                                            
+symplus:/$ intprobe goto                                                                        
+LOOP READY                                                                                      
+^C                                                                                              
+symplus:/$ echo gotook                                                                          
+gotook                                                                                          
+symplus:/$ cat                                                                                  
+^C                                                                                              
+symplus:/$ echo catok                                                                           
+catok                                                                                           
+symplus:/$ cat >/tmp/cancel <<E                                                                 
+> ^C                                                                                            
+symplus:/$ echo hereok                                                                          
+hereok                                                                                          
+symplus:/$ echo interruptdone                                                                   
+interruptdone                                                                                   
+symplus:/$                                                                                      
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
+                                                                                                
