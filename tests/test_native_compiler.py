@@ -2,6 +2,14 @@ import pathlib,sys,struct,unittest,re,json,tempfile,subprocess
 sys.path.insert(0,str(pathlib.Path(__file__).resolve().parent))
 import test_emu_cli
 class NativeCompilerTest(unittest.TestCase):
+    def test_small_stdio_program_instruction_budget(self):
+        # Real guest preprocessing, compilation, linking, publication and execution.
+        mod,disk,screen=test_emu_cli.CliTest().file_session(
+            'cd /tmp\nsymcc speed.c -o speed && ./speed\n',
+            max_instructions=4000000000,
+            extra_files={'/tmp/speed.c':b'#include <stdio.h>\nint main(void){printf("SPEED PASS\\n");return 0;}\n'})
+        self.assertIn(b'SPEED PASS',screen)
+
     def test_macro_expansion_heap_exhaustion_is_a_clean_compile_failure(self):
         old=(test_emu_cli.ROOT/'build/user/echo.spx').read_bytes()
         source=b'#define L "'+b'x'*8192+b'"\nchar *a[]={'+b','.join([b'L']*400)+b'};\nint main(void){return 0;}\n'

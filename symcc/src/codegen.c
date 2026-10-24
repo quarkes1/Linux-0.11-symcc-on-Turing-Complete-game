@@ -668,6 +668,7 @@ static void gen_stmt(Node *n) {
         brk_lbls[brk_depth++] = Lend;
         cont_lbls[cont_depth++] = Lbegin;
         emit_label(Lbegin);
+        emit("__sp_poll_%s:\n",new_label());
         gen_branch_zero(n->lhs, Lend, true);
         gen_stmts(n->rhs);
         emit("    jmp %s\n", Lbegin);
@@ -682,6 +683,7 @@ static void gen_stmt(Node *n) {
         const char *Lend = new_label();
         gen_stmts(n->lhs);
         emit_label(Lbegin);
+        emit("__sp_poll_%s:\n",new_label());
         if (n->rhs)
             gen_branch_zero(n->rhs, Lend, true);
         brk_lbls[brk_depth++] = Lend;
@@ -703,6 +705,7 @@ static void gen_stmt(Node *n) {
         brk_lbls[brk_depth++] = Lend;
         cont_lbls[cont_depth++] = Lcond;   /* continue → 条件处 */
         emit_label(Lbegin);
+        emit("__sp_poll_%s:\n",new_label());
         gen_stmts(n->lhs);
         emit_label(Lcond);
         gen_branch_zero(n->rhs, Lend, true);
@@ -762,6 +765,7 @@ static void gen_stmt(Node *n) {
         emit("    jmp %s\n", cont_lbls[cont_depth - 1]);
         return;
     case ND_GOTO:
+        emit("__sp_poll_%s:\n",new_label());
         emit("    jmp Lg%d\n", n->num);
         return;
     case ND_LABEL: {
@@ -823,6 +827,7 @@ static void gen_func(Func *f) {
         arg_off += (int)psz;
     }
 
+    emit("__sp_poll_%s:\n",new_label());
     gen_stmts(f->body);
     gen_epilogue();
 }

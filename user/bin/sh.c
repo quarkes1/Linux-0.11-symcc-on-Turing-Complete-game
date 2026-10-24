@@ -48,9 +48,10 @@ static int cd_path(char *out,char *path) {
 static void error(char *s){write(2,s,strlen(s));}
 static int read_line(char *line) {
     char discard[64];int n;
-    n=read(0,line,255);if(n<=0)return n;
+    n=read(0,line,255);if(n<0 && errno==4)return -3;if(n<=0)return n;
     if(line[n-1]!='\n') {
         do {n=read(0,discard,64);}while(n>0 && discard[n-1]!='\n');
+        if(n<0 && errno==4)return -3;
         return -2;
     }
     line[n]=0;return n;
@@ -70,6 +71,7 @@ static int heredoc(char *delimiter) {
     else if(unlink(name)<0){close(fd);fd= -1;error("sh: cannot unlink heredoc temporary file\n");bad=1;}
     for(;;) {
         puts("> ");n=read_line(line);
+        if(n== -3){if(fd>=0)close(fd);return -2;}
         if(n== -2){bad=1;continue;}
         if(n<=0){bad=1;break;}
         line[n-1]=0;if(!strcmp(line,delimiter))break;line[n-1]='\n';
@@ -140,6 +142,7 @@ static int execute(ShList *list,ShCommand *c,int last,int *leaving) {
     } else if(!strcmp(c->argv[0],"help")) {
         puts("help cd pwd reset exit [N] | ls cat echo mkdir rm [-r] ps sync\n");
         puts("Operators: && || ; < > >> <<EOF; cat file <<EOF writes file\n");
+        puts("Ctrl+C: cancel input or foreground command\n");
     } else {
         if(c->argv[0][0]=='/' || c->argv[0][0]=='.')strcpy(path,c->argv[0]);
         else {strcpy(path,"/bin/");strcpy(path+5,c->argv[0]);}
@@ -150,17 +153,23 @@ static int execute(ShList *list,ShCommand *c,int last,int *leaving) {
             execve(path,c->argv,0);error(c->argv[0]);error(": not found\n");_exit(127);
         }
         if(pid<0){error("fork failed\n");status=1;}
-        else if(waitpid(pid,&status,0)<0){error("wait failed\n");status=1;}
-        else status=(status&127)?128+(status&127):(status>>8)&255;
+        else {
+            sp_call(103,pid,0,0);
+            if(waitpid(pid,&status,0)<0){error("wait failed\n");status=1;}
+            else status=(status&127)?128+(status&127):(status>>8)&255;
+            sp_call(103,0,0,0);
+        }
     }
     restore(savedin,savedout);return status;
 }
 int main(void) {
     char line[256],text[512];ShList list;ShCommand *c;
     int n,i,bad,last=0,leaving=0,run;
+    sp_call(103,0,0,0);
     if(read_cwd()<0){error("sh: cannot resolve current directory\n");strcpy(cwd,"?");}
     for(;;) {
         puts("symplus:");puts(cwd);puts("$ ");n=read_line(line);
+        if(n== -3){last=130;continue;}
         if(n== -2){error("line too long\n");last=2;continue;}
         if(n<0){error("read error\n");last=1;continue;}
         if(!n)return last;
@@ -168,15 +177,20 @@ int main(void) {
         bad=0;
         for(i=0;i<list.count;i++)if(list.command[i].delimiter) {
             list.command[i].here_fd=heredoc(list.command[i].delimiter);
+            if(list.command[i].here_fd== -2){bad=130;break;}
             if(list.command[i].here_fd<0)bad=1;
         }
-        if(bad){cleanup(&list);last=1;continue;}
+        if(bad){cleanup(&list);last=bad==130?130:1;continue;}
         for(i=0;i<list.count;i++) {
             c=&list.command[i];
             run=c->when==SH_ALWAYS || (c->when==SH_AND && last==0) || (c->when==SH_OR && last!=0);
-            if(run)last=execute(&list,c,last,&leaving);
+            if(run) {
+                last=execute(&list,c,last,&leaving);
+                if(sp_call(105,0,0,0)>0){last=130;leaving=0;}
+            }
             if(c->here_fd>=0){close(c->here_fd);c->here_fd= -1;}
             if(leaving){cleanup(&list);return last;}
+            if(run && last==130)break;
         }
         cleanup(&list);
     }

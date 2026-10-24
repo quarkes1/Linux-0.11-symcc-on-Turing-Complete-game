@@ -5,6 +5,11 @@ def fs_geometry(data):
     ninodes,nzones,imap,zmap,first,shift=struct.unpack_from('>6H',data,1024)
     return {'inode_base':(2+imap+zmap)*1024,'first':first,'nzones':nzones,'zmap_base':(2+imap)*1024}
 class CliTest(unittest.TestCase):
+    def test_control_c_cancels_partial_line(self):
+        mod,disk,screen=self.file_session('echo bad>/tmp/bad\x03echo kept>/tmp/kept\n')
+        self.assertEqual(mod.read_file(disk,'/tmp/kept'),b'kept\n')
+        with self.assertRaises(FileNotFoundError):mod.read_file(disk,'/tmp/bad')
+        self.assertIn(b'^C',screen)
     def test_instruction_budget_is_checked_and_exhaustion_fails(self):
         exe=str(ROOT/'emu/emu.exe')
         for value in ('0','-1','1x','18446744073709551616',''):

@@ -65,3 +65,9 @@ reg_probe_done:
     pop r10
     ret
 .sym sp_reg_probe T text 0 0
+
+.text
+__sp_poll:
+    mov r1, 102
+    jmp 0x104
+.sym __sp_poll T text 0 0

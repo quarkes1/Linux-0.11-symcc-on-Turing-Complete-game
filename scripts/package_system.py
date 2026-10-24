@@ -20,17 +20,29 @@ sync
 reset
 
 支持 &&、||、;、mkdir、rm、ls -la、重定向和 heredoc。
+Ctrl+C 取消当前输入、heredoc 或前台程序；新编译的纯计算循环也能响应。
+symcc 显示预处理/编译/链接阶段；取消时清理临时文件并保留旧输出。
 Shift+, 输入 <；Backspace 删除，Enter 提交。
 symcc 支持单源文件、-o、-I；默认输出 a.out，文件名每段最多14字节。
+详细 C 功能见 docs/symcc-c-support.md；性能与取消验证见 docs/superpowers/。
 其他选项报错，失败保留原输出。标准 SDK 在 /include 与 /lib。
 最多8进程、每进程2 MiB窗口、64 KiB栈；没有浮点或真正64位整数。
 
-模拟器已验证，当前更新的实际游戏运行与32 MiB寻址待人工验证。
+用户已确认容量配置修复乱码；本次性能与Ctrl+C更新的实际游戏运行仍需复验。
 请使用解包后的绝对路径连接外部 bin。要保留游戏中的修改，请另存磁盘副本；构建会重建 rootfs。
 '''
 def main():
     inputs={name:ROOT/'build'/name for name in ('kernel.bin','rootfs.bin','capacity-probe.bin','capacity-disk.bin')}
+    inputs['docs/symcc-c-support.md']=ROOT/'docs/symcc-c-support.md'
+    inputs['docs/superpowers/2026-10-18-symcc-performance-interrupt.md']=ROOT/'docs/superpowers/2026-10-18-symcc-performance-interrupt.md'
     for name in ('footprint.json','instructions.json'):inputs[name]=ROOT/'build/native'/name
+    # Profiling is optional; never attach measurements for older images.
+    performance=ROOT/'build/native/performance.json'
+    if performance.is_file():
+        measured=json.loads(performance.read_text(encoding='utf-8'))
+        if all(measured.get('images',{}).get(name)==hashlib.sha256(inputs[name].read_bytes()).hexdigest()
+               for name in ('kernel.bin','rootfs.bin')):
+            inputs['performance.json']=performance
     for name,path in inputs.items():
         if not path.is_file():raise SystemExit('missing verified artifact: '+str(path))
         if name.endswith('.bin') and path.stat().st_size!=32<<20:raise SystemExit('unexpected image size: '+name)

@@ -71,3 +71,12 @@ for r in range(2,13):probe += [f'    cmp r{r},{r*101}','    jne reg_probe_fail']
 probe+=['    mov r1,0','    jmp reg_probe_done','reg_probe_fail:','    mov r1,1','reg_probe_done:',
         '    pop r12','    pop r11','    pop r10','    ret','.sym sp_reg_probe T text 0 0']
 with user.joinpath('syscall.sym').open('a') as out:out.write('\n'.join(probe)+'\n')
+
+# r12 counts user safe points; the inline fast path enters here every 4096.
+with user.joinpath('syscall.sym').open('a') as out:out.write("""
+.text
+__sp_poll:
+    mov r1, 102
+    jmp 0x104
+.sym __sp_poll T text 0 0
+""")

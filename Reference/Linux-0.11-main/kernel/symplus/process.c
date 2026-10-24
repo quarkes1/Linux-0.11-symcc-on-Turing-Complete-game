@@ -32,7 +32,9 @@ static unsigned arg1[9],arg2[9],arg3[9];
 static int active=1, next_pid=1;
 static char input[1024];
 static unsigned head,tail;
-static int shift;
+static int shift,control;
+static int foreground_pid,foreground_owner;
+static int interrupted[9],deferred[9],cancel_read[9];
 static unsigned last_low,last_high,tick_remainder;
 static int clock_ready;
 
@@ -57,17 +59,43 @@ static void activate(int slot) {
     sp_copy((void *)SP_USER_BASE,(void *)snapshot(slot),SP_USER_SIZE);
     active=slot;current=task[slot];
 }
+/* SYMPLUS-PORT: this shell has one foreground tree, no background jobs. */
+static int descendant(int slot,int root) {
+    int pid=task[slot]->pid,i,depth;
+    for(depth=0;depth<9 && pid>1;depth++) {
+        if(pid==root)return 1;
+        for(i=1;i<=8;i++)if(occupied[i] && task[i]->pid==pid)break;
+        if(i>8)break;
+        pid=task[i]->father;
+    }
+    return 0;
+}
+static void terminal_interrupt(void) {
+    int i;
+    tail=head;tty_write(0,"^C\n",3);
+    for(i=1;i<=8;i++)if(occupied[i]) {
+        if(foreground_pid && descendant(i,foreground_pid))interrupted[i]=1;
+        else if(!foreground_pid && task[i]->pid==foreground_owner)cancel_read[i]=1;
+    }
+}
 static void poll_io(void) {
     unsigned event=sp_keyboard_event(), key=event&255, low,high;
     char c;int i;
     char *plain="`1234567890-=[]\\;',./";
     char *shifted="~!@#$%^&*()_+{}|:\"<>?";
     /* SYMPLUS-PORT: left/right Shift have separate release state. */
-    if(key==16 || key==20) {
+    if(key==17 || key==21) {
+        i=key==17?1:2;
+        if(event&256)control|=i;else control&=~i;
+    }
+    else if(key==16 || key==20) {
         i=key==16?1:2;
         if(event&256)shift|=i;else shift&=~i;
     }
-    else if(event&256) {
+    else if((event&256) && (key==3 || (control && (key==67 || key==99)))) {
+        terminal_interrupt();
+    }
+    else if((event&256) && !control) {
         c=key;
         /* SYMPLUS-PORT: game Backspace is 0x0d; Enter is 0x0a.
          * Do not apply terminal CR-to-LF conversion to hardware events. */
@@ -99,6 +127,7 @@ static int line_ready(void) {
 }
 static int tty_read_user(char *buf,unsigned count) {
     unsigned n=0;char c;
+    if(cancel_read[active]){cancel_read[active]=0;return -EINTR;}
     if(!count)return 0;
     if(!line_ready())return -EAGAIN;
     while(n<count && tail<head) {
@@ -109,6 +138,7 @@ static int tty_read_user(char *buf,unsigned count) {
 }
 static int fork_current(SpContext *ctx) {
     int slot,i;struct task_struct *p;
+    if(deferred[active] && interrupted[active])return -EINTR;
     for(slot=1;slot<=8;slot++)if(!occupied[slot])break;
     if(slot>8)return -EAGAIN;
     p=&process[slot];*p=*current;
@@ -121,6 +151,7 @@ static int fork_current(SpContext *ctx) {
     if(p->root)p->root->i_count++;
     if(p->executable)p->executable->i_count++;
     task[slot]=p;occupied[slot]=1;pending[slot]=0;
+    interrupted[slot]=deferred[slot]=cancel_read[slot]=0;
     return p->pid;
 }
 static void exit_current(int code) {
@@ -185,6 +216,7 @@ static int perform(unsigned nr,unsigned a,unsigned b,unsigned c,SpContext *ctx) 
     case 28:if(!sp_user_range(b,sizeof(struct stat)))return -EFAULT;return sys_fstat(a,(void *)b);
     case 36:return sys_sync();
     case 38:
+        if(deferred[active] && interrupted[active])return -EINTR;
         if(!user_string((char *)a)||!user_string((char *)b))return -EFAULT;
         return sys_rename((char *)a,(char *)b);
     case 39:if(!user_string((char *)a))return -EFAULT;return sys_mkdir((char *)a,b);
@@ -201,14 +233,40 @@ static int perform(unsigned nr,unsigned a,unsigned b,unsigned c,SpContext *ctx) 
         return 0;
     }
     case 101:return 0;
+    case 102:return 0; /* user safe point: poll without yielding */
+    case 103: {
+        int i;
+        if(a) {
+            for(i=1;i<=8;i++)if(occupied[i] && task[i]->pid==a && task[i]->father==current->pid)break;
+            if(i>8)return -ECHILD;
+        }
+        foreground_owner=current->pid;foreground_pid=a;
+        /* Ctrl+C may arrive during fork, before the shell names its child. */
+        if(a && cancel_read[active]) {
+            cancel_read[active]=0;
+            for(i=1;i<=8;i++)if(occupied[i] && descendant(i,a))interrupted[i]=1;
+        }
+        return 0;
+    }
+    case 104: /* compiler driver defers exit so it can clean temporary files */
+        if(a)deferred[active]=1;
+        return interrupted[active];
+    case 105: {
+        int cancelled=cancel_read[active];cancel_read[active]=0;return cancelled;
+    }
     default:return -ENOSYS;
     }
 }
 SpContext *sp_dispatch(SpContext *saved) {
     unsigned nr=saved->regs[1],a=saved->regs[2],b=saved->regs[3],c=saved->regs[4];
-    int result,slot,chosen;
+    int result,slot,chosen,first=1;
     contexts[active]=*saved;
-    result=perform(nr,a,b,c,&contexts[active]);
+    /* SYMPLUS-PORT: observe queued cancellation before syscall side effects,
+       particularly the atomic publication rename. Keep one poll per pass. */
+    poll_io();
+    if(interrupted[active] && !deferred[active]) {
+        exit_current(0);current->exit_code=2;result=0;
+    } else result=perform(nr,a,b,c,&contexts[active]);
     if(result== -EAGAIN && (nr==3 || nr==7)) {
         pending[active]=nr;arg1[active]=a;arg2[active]=b;arg3[active]=c;
         current->state=TASK_INTERRUPTIBLE;
@@ -217,9 +275,15 @@ SpContext *sp_dispatch(SpContext *saved) {
         if(result!=0x70000000)contexts[active].regs[1]=result;
     }
     for(;;) {
-        poll_io();
+        if(!first)poll_io();first=0;
+        /* Mark the whole tree before exit reparents its children. Cleanup runs
+           with each victim's own file table; the shell remains alive. */
+        for(slot=1;slot<=8;slot++)if(occupied[slot] && interrupted[slot] &&
+                !deferred[slot] && task[slot]->state!=TASK_ZOMBIE) {
+            activate(slot);pending[slot]=0;exit_current(0);current->exit_code=2;
+        }
         for(slot=1;slot<=8;slot++)if(occupied[slot] && pending[slot]) {
-            if(pending[slot]==3 && !line_ready())continue;
+            if(pending[slot]==3 && !line_ready() && !cancel_read[slot])continue;
             if(pending[slot]==7 && !wait_ready(slot))continue;
             activate(slot);
             result=perform(pending[slot],arg1[slot],arg2[slot],arg3[slot],&contexts[slot]);

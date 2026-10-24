@@ -69,7 +69,7 @@ exit
 断言命令执行结果应选输出专用标记。
 
 当前限制：最多 8 个用户进程（含 init 和 shell）；每个进程有 2 MiB 用户窗口，工具链默认保留 64 KiB 栈空间。
-采用调用边界的合作式切换，无系统调用的死循环不会被抢占。无硬件内存保护。
+采用调用边界的合作式切换；新编译 C 程序通过软件检查点响应 Ctrl+C，未插桩且无系统调用的循环仍不能中断。无硬件内存保护。
 命令行支持退格、大小写、字面量引号、文件重定向和 heredoc；不支持管道和后台作业。
 本机游戏键码为 Backspace=`0x0D`、Enter=`0x0A`；驱动将前者处理为删除，后者提交命令，
 并兼容 ASCII 退格 `0x08` / `0x7F`。宿主模拟器在输入边界将终端 CR 转为 LF。
@@ -103,6 +103,13 @@ reset
 SDK 提供整数/字符串/FILE/格式化输出和可复用堆；没有浮点、真正的 64 位整数或完整 POSIX/GNU 库。
 仍受当前 C 编译器能力和 2 MiB 进程窗口限制；过大的编译任务会报错，原输出保留。
 
+当前 C 功能、已知限制和 Ctrl+C 约定见 [symcc 支持范围](docs/symcc-c-support.md)。
+Ctrl+C 取消当前行、heredoc 或前台程序，返回 shell；被取消的命令列表不再继续执行。
+用户程序加入软件检查点，纯计算死循环也能取消；CPU 与 ISA 不变。旧程序需重新编译才能获得此能力。
+symcc 会显示 preprocessing / compiling / linking 阶段，取消后清理临时文件并保留旧输出。
+堆分配器改用空闲块分桶和相邻合并；本次性能与取消功能的游戏实际运行仍需复验。
+目标指令对比与验证过程见 [性能与 Ctrl+C 记录](docs/superpowers/2026-10-18-symcc-performance-interrupt.md)。
+
 ### 先验证游戏存储寻址
 
 ```powershell
@@ -114,7 +121,7 @@ bash scripts/build_capacity_probe.sh
 探针保存并还原测试位置，使用独立测试盘。之后切回 `build/kernel.bin` 和 `build/rootfs.bin` 启动系统。
 模拟器已覆盖正常寻址和故意屏蔽高地址线的失败情况；实际游戏中的容量结果仍需人工复验。
 
-完整回归、独立审阅修正、阶段内存和镜像摘要见[本次验收记录](docs/superpowers/2026-10-17-native-symcc-verification.md)。
+最初原生 symcc 交付的完整回归、阶段内存和镜像摘要见[初始验收记录](docs/superpowers/2026-10-17-native-symcc-verification.md)；当前性能与取消功能见上文更新记录。
 
 `python scripts/package_system.py` 生成包含系统、独立探针、测试盘、加载说明和校验清单的交付 zip，
 并逐字节验证解包内容。模拟器长任务可指定 `--max-instructions N`；预算耗尽返回非零，不代表完成。

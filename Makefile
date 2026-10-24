@@ -65,6 +65,11 @@ test: all m3-image system-image
 	tests/shell_test.exe --files
 	tests/shell_test.exe --lists
 	tests/shell_test.exe --reset
+	tests/shell_test.exe --interrupt
+	tests/shell_test.exe --interrupt-native
+	tests/shell_test.exe --interrupt-compiler
+	tests/shell_test.exe --interrupt-publish
+	tests/shell_test.exe --interrupt-builtin
 	tests/shell_parse_test.exe
 	tests/native_heap_test.exe
 	tests/tick_test.exe

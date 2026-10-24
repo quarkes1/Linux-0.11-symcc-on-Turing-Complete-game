@@ -33,7 +33,9 @@ static int reserve(void) {
     return -1;
 }
 static int run(char *path,char **args) {
-    int pid=fork(),status;
+    int pid,status;
+    if(sp_call(104,0,0,0))return -1;
+    pid=fork();
     if(pid<0){error("fork failed");return -1;}
     if(!pid){execve(path,args,0);error("cannot execute compiler stage");_exit(127);}
     if(waitpid(pid,&status,0)!=pid || status){error("compilation failed");return -1;}
@@ -41,6 +43,7 @@ static int run(char *path,char **args) {
 }
 int main(int argc,char **argv) {
     char *source=0,*output="a.out",*args[22];int i,n,result=1;
+    sp_call(104,1,0,0);
     for(i=1;i<argc;i++) {
         if(!strcmp(argv[i],"-o")){if(++i==argc){error("missing output path");return 2;}output=argv[i];}
         else if(!strcmp(argv[i],"-I") || (argv[i][0]=='-' && argv[i][1]=='I' && argv[i][2])) {
@@ -57,12 +60,13 @@ int main(int argc,char **argv) {
     if(reserve()){error("cannot create temporary files");return 1;}
     args[0]="scpp";args[1]=source;args[2]=temporary[0];n=3;
     for(i=0;i<include_count;i++){args[n++]="-I";args[n++]=includes[i];}args[n]=0;
-    if(run("/bin/scpp",args))goto done;
+    error("preprocessing");if(run("/bin/scpp",args))goto done;
     args[0]="scc1";args[1]=temporary[0];args[2]=temporary[1];args[3]=0;
-    if(run("/bin/scc1",args))goto done;
+    error("compiling");if(run("/bin/scc1",args))goto done;
     args[0]="sld";args[1]=temporary[1];args[2]=temporary[2];
-    if(run("/bin/sld",args))goto done;
+    error("linking");if(run("/bin/sld",args))goto done;
+    if(sp_call(104,0,0,0))goto done;
     if(chmod(temporary[2],0755) || rename(temporary[2],output)){error("cannot publish output");goto done;}
     result=0;
-done:cleanup();return result;
+done:cleanup();if(sp_call(104,0,0,0))result=130;return result;
 }

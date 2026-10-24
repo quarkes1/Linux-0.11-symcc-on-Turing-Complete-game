@@ -9,12 +9,13 @@
 #include "emu/asm.h"
 #include "emu/isa.h"
 #include "runtime/platform.h"
+#define POLL_BYTES 60
 
 typedef struct { char *name; unsigned addr; int owner, exported; } ImageSym;
 typedef struct {
     ImageSym *syms; int ns, cap;
     char *out; size_t used, size;
-    LinkError *err; int failed;
+    LinkError *err; int failed,poll;
 } Image;
 static unsigned a4(unsigned x) { return (x+3u)&~3u; }
 static void fail(Image *im,const char *fmt,...) {
@@ -77,8 +78,9 @@ static int reg(const char *s) { return isa_reg_index(s)>=0; }
 static void parts(const char *s,char op[32],char arg[512]) {
     op[0]=arg[0]=0; sscanf(s,"%31s %511[^ ;\t\r\n]",op,arg);
 }
-static unsigned line_size(const char *s) {
+static unsigned line_size(const char *s,int polling) {
     char op[32],arg[512];parts(s,op,arg);
+    if(!strncmp(op,"__sp_poll_L",11))return polling?POLL_BYTES:0;
     if(cond(op))return 16;
     if(!strcmp(op,"call"))return 32;
     if(!strcmp(op,"jmp") && !reg(arg))return 16;
@@ -101,7 +103,8 @@ static void labels(Image *im,Obj *o,int owner,char **lines,int count,unsigned ba
             if(n>=sizeof name){fail(im,"label too long");return;}
             memcpy(name,lines[i],n);name[n]=0;
             add(im,name,base,owner,exported(o,name));
-        } else base+=text?line_size(lines[i]):(unsigned)obj_line_size(lines[i]);
+            if(text && im->poll && !strncmp(name,"__sp_poll_L",11))base+=POLL_BYTES;
+        } else base+=text?line_size(lines[i],im->poll):(unsigned)obj_line_size(lines[i]);
     }
 }
 static void target(Image *im,unsigned addr) {
@@ -110,8 +113,18 @@ static void target(Image *im,unsigned addr) {
 static void line(Image *im,const char *s,int owner,const LinkOptions *opt) {
     char op[32],arg[512]; parts(s,op,arg);
     if(obj_label_name_len(s)) {
-        if(!strcmp(op,"main:"))emit(im,"main:\n");
-        return;
+        if(im->poll && !strncmp(op,"__sp_poll_L",11)) {
+            /* r12 is reserved by SDK-linked C code as a per-context counter.
+               Check cheaply in user space; enter the kernel every 4096 sites. */
+            op[strlen(op)-1]=0;
+            unsigned skip=resolve(im,op,owner)+POLL_BYTES;
+            emit(im,"    add r12, r12, 1\n    and r12, r12, 4095\n    cmp r12, 0\n");
+            target(im,skip);emit(im,"    jne 0x%x\n",opt->branch_gate);
+            strcpy(op,"call");strcpy(arg,"__sp_poll");
+        } else {
+            if(!strcmp(op,"main:"))emit(im,"main:\n");
+            return;
+        }
     }
     if(cond(op)) {
         target(im,resolve(im,arg,owner));
@@ -180,9 +193,13 @@ bool symld_link_ex(Obj **objs,int n,const char *crt0,const LinkOptions *opt,FILE
         } fclose(f);
     }
     all[0]=start;for(int i=0;i<n;i++)all[i+1]=objs[i];n++;
+    /* Software safe points are active only in SDK-linked user images.
+       Legacy images and the kernel retain their original instruction stream. */
+    if(opt->image_kind==SP_IMAGE_USER)
+        for(int i=0;i<n;i++)if(exported(all[i],"__sp_poll"))im.poll=1;
     for(int i=0;i<n;i++) {
         ts[i]=pos;
-        for(int k=0;k<all[i]->n_text;k++)pos=advance(&im,pos,line_size(all[i]->text_lines[k]),opt->limit);
+        for(int k=0;k<all[i]->n_text;k++)pos=advance(&im,pos,line_size(all[i]->text_lines[k],im.poll),opt->limit);
         if(im.failed)goto done;
         labels(&im,all[i],i,all[i]->text_lines,all[i]->n_text,ts[i],1);
     }
@@ -219,7 +236,7 @@ bool symld_link_ex(Obj **objs,int n,const char *crt0,const LinkOptions *opt,FILE
     }
     pos=base;
     for(int i=0;i<n;i++)for(int k=0;k<all[i]->n_text;k++) {
-        line(&im,all[i]->text_lines[k],i,opt);pos+=line_size(all[i]->text_lines[k]);
+        line(&im,all[i]->text_lines[k],i,opt);pos+=line_size(all[i]->text_lines[k],im.poll);
     }
     pad(&im,pos,a4(pos));pos=a4(pos);
     for(int i=0;i<n;i++)for(int k=0;k<all[i]->n_data;k++) {
