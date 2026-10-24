@@ -24,4 +24,6 @@ __pycache__/
 .superpowers/
 /build/
 /docs/
+AGENTS.md
+agents.md
 tests/*.tmp

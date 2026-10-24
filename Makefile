@@ -1,6 +1,6 @@
 # Makefile — SymphonyPlus 工具链（emu/）
 # 注意：需以 PATH 前缀调用（MSYS2 优先于 Git Bash 自带 /mingw64）：
-#   PATH="/d/Downloads/msys64/mingw64/bin:$PATH" mingw32-make
+#   PATH="$MSYS2_UCRT64_BIN:$PATH" mingw32-make
 
 CC := gcc
 CFLAGS := -O0 -g -Wall -Wextra -I.

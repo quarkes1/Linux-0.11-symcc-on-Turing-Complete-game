@@ -23,7 +23,7 @@ SymphonyPlus 是一套面向游戏《Turing Complete》中自建 32 位 CPU 的�
 
 ### 直接在游戏中加载
 
-可以使用仓库内的 [32MiB 预编译系统包](build/SymphonyPlus-native-symcc-32MiB.zip)，或按下文从源码构建。将压缩包解压到固定目录，再设置外部文件路径。
+按下文从源码构建系统镜像，也可以使用自行构建的 `SymphonyPlus-native-symcc-32MiB.zip`。将压缩包解压到固定目录，再设置外部文件路径。构建产物不随源码提交。
 
 | 游戏组件 | 外部文件 | 容量 | 端序 |
 |---|---|---|---|
@@ -46,10 +46,12 @@ symplus:/$
 
 当前构建流程使用 Windows、Git Bash、MSYS2 GCC 和 Python 3。确保 MSYS2 工具链排在 PATH 前部，避免混用 Git Bash 自带的其他 MinGW 环境。
 
-PowerShell 示例（将路径换成实际安装位置）：
+先将 MSYS2 UCRT64 的 `bin` 目录加入系统 PATH，重新打开终端。也可自行设置环境变量 `MSYS2_UCRT64_BIN`，通过下面的方式临时加入 PATH。
+
+PowerShell 示例：
 
 ```powershell
-$env:PATH = 'D:\Downloads\msys64\ucrt64\bin;' + $env:PATH
+if ($env:MSYS2_UCRT64_BIN) { $env:PATH = $env:MSYS2_UCRT64_BIN + ';' + $env:PATH }
 $env:PYTHONUTF8 = '1'
 
 mingw32-make all
@@ -59,7 +61,7 @@ bash scripts/build_system.sh
 也可以在 Git Bash 中运行：
 
 ```bash
-export PATH="/d/Downloads/msys64/ucrt64/bin:$PATH"
+if [ -n "${MSYS2_UCRT64_BIN:-}" ]; then export PATH="$MSYS2_UCRT64_BIN:$PATH"; fi
 export PYTHONUTF8=1
 mingw32-make all
 bash scripts/build_system.sh
@@ -238,7 +240,7 @@ bash scripts/build_capacity_probe.sh
 | [user/](user/) | init、shell、用户命令、原生编译阶段与 SDK |
 | [scripts/](scripts/) | 构建、根文件系统生成与打包 |
 | [tests/](tests/) | 工具链、目标机器执行及系统回归 |
-| `build/` | 生成的镜像、对象、日志和交付包；历史提交中也保留部分交付产物 |
+| `build/` | 本地生成的镜像、对象、日志和交付包，已忽略 |
 | `docs/` | 本地设计与验收记录，已由 `.gitignore` 忽略，不随新提交跟踪 |
 
 项目经历了 M0 环境验证、M1 编译器骨架、M2 内核编译链接、M3 启动后停机，现已推进到交互系统和原生编译。需要复现历史 M3 演示时，运行 `bash scripts/build_kernel.sh --m3`，镜像输出到 `build/m3/`；默认构建生成当前交互系统。

@@ -1,9 +1,0 @@
-native core: tokenize
-native core: preprocess
-native core: parse
-native core: codegen
-native core: obj
-native core: link_image
-C:/Users/19444/Desktop/TuringComplete/build/rootfs.bin: 33554432 bytes
-kernel payload 754312 bytes; RAM image 33554432 bytes
-INTERACTIVE SYSTEM BUILD OK
